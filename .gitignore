@@ -1,0 +1,14 @@
+node_modules/
+chrome-profile/
+runtime/audit/*.jsonl
+runtime/drafts/*
+runtime/memory/*
+!runtime/**/.gitkeep
+runtime/*.log
+runtime/duty.log
+config/*.tmp-*
+.env
+.env.*
+.DS_Store
+Thumbs.db
+STOP

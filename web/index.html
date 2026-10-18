@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>小深 · bili-duty 控制台</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">深</span>
+          <div>
+            <strong>小深</strong>
+            <small>bili-duty 控制台</small>
+          </div>
+        </div>
+        <nav class="nav" id="nav">
+          <button class="active" data-view="overview"><span>概览</span></button>
+          <button data-view="login"><span>登录</span></button>
+          <button data-view="allowlist"><span>私信白名单</span></button>
+          <button data-view="params"><span>参数</span></button>
+          <button data-view="audit"><span>审计</span></button>
+        </nav>
+        <div class="side-foot">
+          <span id="app-version">v0.1.0</span>
+          <span>仅本机 · 127.0.0.1</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1 id="view-title">概览</h1>
+            <p id="view-sub">账号运行前的准备：登录、白名单、参数。</p>
+          </div>
+          <div class="pills">
+            <span class="pill" id="pill-chrome"><i class="dot"></i>Chrome · 检测中</span>
+            <span class="pill" id="pill-login"><i class="dot"></i>未登录</span>
+          </div>
+        </header>
+
+        <section class="view" id="view-overview">
+          <div class="grid stats">
+            <article class="card stat">
+              <span class="stat-label">Chrome / CDP</span>
+              <strong id="stat-chrome">检测中</strong>
+              <small id="stat-chrome-sub">—</small>
+            </article>
+            <article class="card stat">
+              <span class="stat-label">B 站登录</span>
+              <strong id="stat-login">未登录</strong>
+              <small id="stat-login-sub">扫码或读取已有登录态</small>
+            </article>
+            <article class="card stat">
+              <span class="stat-label">私信白名单</span>
+              <strong id="stat-allow">0 人</strong>
+              <small id="stat-allow-sub">只发给知情好友</small>
+            </article>
+            <article class="card stat">
+              <span class="stat-label">审计记录</span>
+              <strong id="stat-audit">0 条</strong>
+              <small id="stat-audit-sub">runtime/audit</small>
+            </article>
+          </div>
+
+          <div class="panel" id="warnings-panel" hidden>
+            <h2>需要注意</h2>
+            <ul class="warn-list" id="warnings-list"></ul>
+          </div>
+
+          <div class="grid two">
+            <div class="panel">
+              <h2>现在做什么</h2>
+              <ol class="steps" id="next-steps">
+                <li><b>登录 B 站</b><span>扫码登录，或复用专用 Chrome 里已有的登录态。</span></li>
+                <li><b>填私信白名单</b><span>只加确认过、知道这是 AI 的人。</span></li>
+                <li><b>确认参数</b><span>配额默认很保守，先按默认跑。</span></li>
+              </ol>
+              <div class="actions">
+                <button class="primary" data-goto="login">去登录</button>
+                <button class="ghost" data-goto="allowlist">加白名单</button>
+                <button class="ghost" data-goto="params">看参数</button>
+              </div>
+            </div>
+            <div class="panel">
+              <h2>路径</h2>
+              <dl class="path-list" id="path-list"></dl>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>最近审计</h2>
+              <button class="link" data-goto="audit">查看全部</button>
+            </div>
+            <div class="table-wrap"><table id="mini-audit"></table></div>
+          </div>
+        </section>
+
+        <section class="view hidden" id="view-login">
+          <div class="grid two">
+            <div class="panel">
+              <h2>扫码登录</h2>
+              <p class="muted">
+                点按钮后会启动一个专用的 Chrome（独立 profile，默认无头运行），二维码显示在下面。
+                用手机 B 站扫码，确认时选「记住我 / 长期」。
+              </p>
+              <label class="check">
+                <input type="checkbox" id="login-headful" />
+                <span>显示 Chrome 窗口（遇到滑块 / 验证码时勾选）</span>
+              </label>
+              <div class="actions">
+                <button class="primary" id="btn-qr">启动并显示二维码</button>
+                <button class="ghost" id="btn-qr-refresh">刷新二维码</button>
+              </div>
+              <div class="qr-wrap" id="qr-wrap">
+                <img id="qr-image" alt="B 站登录二维码" hidden />
+                <div class="qr-empty" id="qr-placeholder">
+                  <span>二维码会显示在这里</span>
+                  <small>登录态只保存在本机 chrome-profile</small>
+                </div>
+              </div>
+              <p class="hint" id="qr-hint">尚未启动。</p>
+            </div>
+
+            <div class="panel">
+              <h2>直接获取登录态</h2>
+              <p class="muted">
+                专用 Chrome 登录过一次后，Cookie 会留在 <code>chrome-profile</code>，重启后仍然有效。
+                也可以连接另一台已开着调试端口的 Chrome。
+              </p>
+              <div class="inline-form">
+                <label>CDP 端口<input type="number" id="attach-port" value="9222" min="1024" max="65535" /></label>
+                <button class="ghost" id="btn-attach">检测登录态</button>
+              </div>
+              <div class="login-card" id="login-card">
+                <span class="login-state" id="login-state">未检测</span>
+                <dl>
+                  <div><dt>UID</dt><dd id="login-uid">—</dd></div>
+                  <div><dt>昵称</dt><dd id="login-name">—</dd></div>
+                  <div><dt>Cookie 到期</dt><dd id="login-expires">—</dd></div>
+                </dl>
+              </div>
+              <p class="hint">
+                连接别的 Chrome 需要它以
+                <code>--remote-debugging-port=9222 --user-data-dir=&lt;非默认目录&gt;</code>
+                启动（Chrome 不允许对默认 profile 开调试端口）。
+              </p>
+              <button class="danger ghost" id="btn-logout">退出登录（清除 B 站 Cookie）</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="view hidden" id="view-allowlist">
+          <div class="panel">
+            <h2>私信白名单</h2>
+            <p class="muted">
+              只有这里的人能收到 AI 私信。人数越少越好；加人不需要重启，删人即时生效。
+              这份文件由你手动维护，Agent 没有写权限。
+            </p>
+            <form id="allow-form" class="form-grid" autocomplete="off">
+              <label>B 站 UID<input name="uid" inputmode="numeric" pattern="\d+" required placeholder="例如 12345678" /></label>
+              <label>昵称<input name="name" maxlength="40" required placeholder="对方看到的名字" /></label>
+              <label class="wide">备注<input name="note" maxlength="120" placeholder="已知情，2026-10 加入" /></label>
+              <div class="wide actions"><button class="primary" type="submit">加入白名单</button></div>
+            </form>
+            <div class="table-wrap">
+              <table id="allow-table">
+                <thead><tr><th>UID</th><th>昵称</th><th>备注</th><th></th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <ul class="rules" id="allow-rules"></ul>
+          </div>
+        </section>
+
+        <section class="view hidden" id="view-params">
+          <div class="panel">
+            <h2>参数</h2>
+            <p class="muted">
+              所有参数写在 <code>config/config.yaml</code>，保存时逐行改值、保留注释。
+              硬约束项（白名单、禁止链接、规则引擎、动态人工审核）锁定，无法关闭。
+            </p>
+            <div id="config-errors"></div>
+          </div>
+          <div id="param-groups"></div>
+          <div class="savebar">
+            <button class="primary" id="btn-save-params">保存参数</button>
+            <span class="muted" id="params-note"></span>
+          </div>
+        </section>
+
+        <section class="view hidden" id="view-audit">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>审计日志</h2>
+              <button class="ghost" id="btn-audit-refresh">刷新</button>
+            </div>
+            <p class="muted" id="audit-meta">—</p>
+            <div class="table-wrap"><table id="audit-table"></table></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

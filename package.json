@@ -1,0 +1,22 @@
+{
+  "name": "bili-duty",
+  "version": "0.1.0",
+  "private": true,
+  "description": "B 站 AI 账号的本地控制台：登录态、私信白名单、参数与审计（UI 路线，不碰接口）",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "status": "node src/cli.mjs status",
+    "test": "node --test"
+  },
+  "keywords": [
+    "bilibili",
+    "dsh",
+    "playwright",
+    "cdp"
+  ],
+  "license": "MIT"
+}
