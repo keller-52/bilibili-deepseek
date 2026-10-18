@@ -11,7 +11,7 @@
 | 模块 | 能力 |
 |---|---|
 | **登录** | 启动专用 Chrome（独立 profile + CDP 9222），截取 passport 登录页的二维码显示在控制台；手机扫码后自动检测登录态（读 Cookie，不调接口）。也支持连接另一台已开调试端口的 Chrome，或直接读取专用 profile 里留存的登录态。退出时清除 B 站 Cookie。 |
-| **私信白名单** | 增 / 删 UID、昵称、备注，写回 `config/dm-allowlist.json`；加入真实 UID 时自动替换示例 UID 0，重复与非法 UID 会被拒绝。 |
+| **私信白名单** | 增 / 删 UID、昵称、备注，写回 `config/dm-allowlist.json`；可以把其中**一位标成主人**（只能一位）。加入真实 UID 时自动替换示例 UID 0，重复与非法 UID 会被拒绝。 |
 | **参数中心** | 按 `config/config.yaml` 渲染 7 组参数：互动配额、私信、发布、审核、AUTO、调度、风控。保存时**逐行改值、保留注释**。硬约束（白名单、禁止链接、规则引擎、动态人工审核）锁定。 |
 | **审计** | 读取 `runtime/audit/audit.jsonl` 尾部，展示时间 / 动作 / 目标 / 规则 / AI / 人工 / 执行 / 核验。 |
 | **状态** | Chrome、CDP、登录 UID、Cookie 到期、白名单人数、配置错误与警告。 |
@@ -32,7 +32,7 @@ npm start
 
 1. **登录 → 启动并显示二维码**。会拉起一个专用 Chrome（默认无头；遇到滑块就勾上「显示 Chrome 窗口」）。
 2. 手机 B 站扫码，确认时选「记住我 / 长期」。状态会在 2.5 秒内变成「已登录 · UID …」。
-3. **私信白名单**里把示例 UID 0 换成真实好友（只加确认过、知道这是 AI 的人）。
+3. **私信白名单**里把示例 UID 0 换成真实好友（只加确认过、知道这是 AI 的人），并点「设为主人」标记那位主人。
 
 `config/dm-allowlist.json` 不入库：首次读取时从 `config/dm-allowlist.example.json` 自动生成，
 你也可以手动 `copy config\dm-allowlist.example.json config\dm-allowlist.json`。
@@ -80,6 +80,32 @@ npm start
 
 登录态落在 `chrome-profile/`（已 gitignore），仓库里**没有任何 Cookie 或密钥**。
 
+## 主人、@ 规则与私信
+
+白名单里可以标**一位「主人」**（`owner: true`）：控制台白名单页点「设为主人」，同一时间只能有一位。
+
+- **评论**：只允许 @ 主人；没写就自动补 `@主人`，写了别的人直接拒绝。
+  规则在 [`src/policy.mjs`](src/policy.mjs)，可以先在命令行验：
+
+  ```bash
+  node src/cli.mjs comment-check "这个视频讲得不错"
+  # → @Kylume 这个视频讲得不错
+  ```
+
+- **私信**：只发给主人，只走主人这一个会话；禁止链接、≤300 字，
+  日 10 / 同一人 3 / 间隔 5 分钟（读 `config.yaml`）。
+
+  ```bash
+  node src/cli.mjs dm --dry-run "只输入、不发送"
+  node src/cli.mjs dm "我是小深。白名单里已经把你标成主人了。"
+  ```
+
+  发送前检查登录态、不能发给自己、配额；发送后截图到 `runtime/dm-last.png`，
+  并往 `runtime/audit/audit.jsonl` 追加一条 `action=dm`。
+
+> 评论执行器还没实现（阶段 3），所以现在只有「规则 + 校验命令」；
+> 私信是第一条真正会写 B 站的能力，只对主人开放。
+
 ## 安全边界
 
 - 服务只监听 `127.0.0.1`，不对外网开放。
@@ -118,8 +144,10 @@ npm start
 │   ├── config.mjs                 # config.yaml 读写
 │   ├── yaml.mjs                   # YAML 子集解析 + 逐行改写
 │   ├── schema.mjs                 # 参数目录与校验
-│   ├── allowlist.mjs              # 白名单读写
-│   ├── audit.mjs                  # 审计尾读
+│   ├── allowlist.mjs              # 白名单读写 + 主人标记
+│   ├── policy.mjs                 # 评论 @ 规则（只 @ 主人）
+│   ├── dm.mjs                     # 私信主人（CDP + 配额 + 审计）
+│   ├── audit.mjs                  # 审计读写
 │   └── paths.mjs                  # 工作区路径
 ├── web/                           # 控制台（原生 HTML/CSS/JS）
 └── test/                          # node:test
@@ -134,7 +162,7 @@ npm start
 ## 开发
 
 ```bash
-npm test          # 28 个用例：YAML、参数校验、白名单、HTTP、DSH 插件
+npm test          # 40 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、HTTP、DSH 插件
 node src/cli.mjs status
 node src/cli.mjs status --json
 ```

@@ -134,7 +134,11 @@ function renderOverview(status) {
     : '扫码或读取已有登录态';
 
   $('#stat-allow').textContent = `${allowlist.count} 人`;
-  $('#stat-allow-sub').textContent = allowlist.placeholder ? '仍是示例 UID 0，请替换' : '只发给知情好友';
+  $('#stat-allow-sub').textContent = allowlist.owner
+    ? `主人：${allowlist.owner.name}`
+    : allowlist.placeholder
+      ? '仍是示例 UID 0，请替换'
+      : '只发给知情好友';
 
   $('#stat-audit').textContent = `${audit.total} 条`;
   $('#stat-audit-sub').textContent = audit.missing ? '还没有审计文件' : 'runtime/audit';
@@ -144,6 +148,7 @@ function renderOverview(status) {
   for (const warning of config.warnings) warnings.push({ kind: 'warn', text: warning });
   if (!chrome.found) warnings.push({ kind: 'bad', text: '没有找到 Chrome，登录和 UI 操作都无法进行。' });
   if (allowlist.placeholder) warnings.push({ kind: 'warn', text: '私信白名单还是示例 UID 0：先替换成真实 UID，或先保持私信关闭。' });
+  if (!allowlist.owner) warnings.push({ kind: 'warn', text: '白名单还没有标记主人：评论 @ 规则会拒绝，私信也发不出去。' });
   const panel = $('#warnings-panel');
   panel.hidden = warnings.length === 0;
   $('#warnings-list').innerHTML = warnings
@@ -318,11 +323,17 @@ function renderAllowlist(data) {
     tbody.innerHTML = data.allow
       .map((row) => {
         const isPlaceholder = Number(row.uid) === 0;
+        const isOwner = row.owner === true;
         return `<tr>
           <td>${esc(row.uid)} ${isPlaceholder ? '<span class="tag bad">示例</span>' : ''}</td>
-          <td>${esc(row.name || '—')}</td>
+          <td>${isOwner ? '<span class="tag ok">主人</span> ' : ''}${esc(row.name || '—')}</td>
           <td class="muted">${esc(row.note || '')}</td>
-          <td><button class="ghost danger" data-delete-uid="${esc(row.uid)}">移除</button></td>
+          <td class="row-actions">
+            ${isOwner
+              ? '<span class="muted">评论只 @ 主人</span>'
+              : `<button class="ghost" data-owner-uid="${esc(row.uid)}">设为主人</button>
+                 <button class="ghost danger" data-delete-uid="${esc(row.uid)}">移除</button>`}
+          </td>
         </tr>`;
       })
       .join('');
@@ -367,6 +378,19 @@ async function deleteAllow(uid) {
     state.allowlist = data;
     renderAllowlist(data);
     toast('已移除', 'ok');
+    await loadStatus();
+  } catch (error) {
+    toast(error.message, 'bad');
+  }
+}
+
+async function setOwner(uid) {
+  if (!window.confirm(`把 UID ${uid} 设为主人？评论只会 @ 主人，私信也只会发给主人。`)) return;
+  try {
+    const data = await api(`allowlist/${encodeURIComponent(uid)}/owner`, { method: 'POST' });
+    state.allowlist = data;
+    renderAllowlist(data);
+    toast('已设为主人', 'ok');
     await loadStatus();
   } catch (error) {
     toast(error.message, 'bad');
@@ -549,6 +573,8 @@ function bindEvents() {
     if (goto) go(goto.dataset.goto);
     const del = event.target.closest('[data-delete-uid]');
     if (del) deleteAllow(del.dataset.deleteUid);
+    const owner = event.target.closest('[data-owner-uid]');
+    if (owner) setOwner(owner.dataset.ownerUid);
   });
 
   $('#btn-qr').addEventListener('click', startQr);

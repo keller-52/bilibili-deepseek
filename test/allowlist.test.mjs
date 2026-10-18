@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { addAllowlistEntry, loadAllowlist, removeAllowlistEntry } from '../src/allowlist.mjs';
+import { addAllowlistEntry, getOwner, loadAllowlist, removeAllowlistEntry, setAllowlistOwner } from '../src/allowlist.mjs';
 
 const ALLOWLIST_URL = new URL('./fixtures/dm-allowlist.json', import.meta.url);
 
@@ -70,5 +70,34 @@ test('removing an entry works and is idempotent-safe', async () => {
 
     const again = await removeAllowlistEntry(99, file);
     assert.equal(again.ok, false);
+  });
+});
+
+test('marking an owner is exclusive', async () => {
+  await withTempAllowlist(async (file) => {
+    await addAllowlistEntry({ uid: 11, name: 'A' }, file);
+    await addAllowlistEntry({ uid: 22, name: 'B' }, file);
+
+    assert.equal((await setAllowlistOwner(11, file)).ok, true);
+    let data = await loadAllowlist(file);
+    assert.equal(getOwner(data).uid, 11);
+    assert.equal(data.allow.filter((row) => row.owner === true).length, 1);
+
+    assert.equal((await setAllowlistOwner(22, file)).ok, true);
+    data = await loadAllowlist(file);
+    assert.equal(getOwner(data).uid, 22);
+    assert.equal(data.allow.filter((row) => row.owner === true).length, 1);
+  });
+});
+
+test('the owner cannot be removed and must be a member', async () => {
+  await withTempAllowlist(async (file) => {
+    assert.equal((await setAllowlistOwner(123, file)).ok, false);
+
+    await addAllowlistEntry({ uid: 11, name: 'A' }, file);
+    await setAllowlistOwner(11, file);
+    const removed = await removeAllowlistEntry(11, file);
+    assert.equal(removed.ok, false);
+    assert.match(removed.errors[0], /主人/);
   });
 });

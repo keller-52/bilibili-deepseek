@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 
 export async function tailAudit(file, limit = 50) {
   let text;
@@ -22,4 +23,10 @@ export async function tailAudit(file, limit = 50) {
 
   const size = Math.max(1, Math.min(Number(limit) || 50, 200));
   return { entries: entries.slice(-size).reverse(), total: entries.length, invalid, missing: false };
+}
+
+/** Append one JSON line. The audit log is append-only by design. */
+export async function appendAudit(file, entry) {
+  await mkdir(path.dirname(file), { recursive: true });
+  await appendFile(file, `${JSON.stringify(entry)}\n`, 'utf8');
 }

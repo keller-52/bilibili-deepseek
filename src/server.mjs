@@ -14,7 +14,7 @@ import {
 } from './paths.mjs';
 import { loadConfig, savePatch } from './config.mjs';
 import { PARAM_GROUPS } from './schema.mjs';
-import { addAllowlistEntry, loadAllowlist, removeAllowlistEntry } from './allowlist.mjs';
+import { addAllowlistEntry, getOwner, loadAllowlist, removeAllowlistEntry, setAllowlistOwner } from './allowlist.mjs';
 import { tailAudit } from './audit.mjs';
 import { findChrome, fetchCdpVersion, isCdpUp, launchChrome } from './chrome.mjs';
 import { attachPage, connectCdp, sleep, waitFor } from './cdp.mjs';
@@ -145,7 +145,14 @@ export async function buildStatus() {
     mode: 'ui',
     chrome,
     login,
-    allowlist: { count: allowlist.allow.length, placeholder: allowlist.allow.some((row) => Number(row.uid) === 0) },
+    allowlist: {
+      count: allowlist.allow.length,
+      placeholder: allowlist.allow.some((row) => Number(row.uid) === 0),
+      owner: (() => {
+        const owner = getOwner(allowlist);
+        return owner ? { uid: owner.uid, name: owner.name } : null;
+      })(),
+    },
     audit: { total: audit.total, invalid: audit.invalid, recent: audit.entries, missing: Boolean(audit.missing) },
     config: { errors: config.errors, warnings: config.warnings, path: CONFIG_FILE },
     paths: {
@@ -324,6 +331,13 @@ async function handleApi(req, res, url) {
     const result = await removeAllowlistEntry(Number(removeMatch[1]));
     if (!result.ok) return sendJson(res, 400, { error: result.errors.join('；'), errors: result.errors });
     return sendJson(res, 200, { ok: true, ...(await loadAllowlist()) });
+  }
+
+  const ownerMatch = /^\/api\/allowlist\/(\d+)\/owner$/.exec(pathname);
+  if (req.method === 'POST' && ownerMatch) {
+    const result = await setAllowlistOwner(Number(ownerMatch[1]));
+    if (!result.ok) return sendJson(res, 400, { error: result.errors.join('；'), errors: result.errors });
+    return sendJson(res, 200, { ok: true, owner: result.owner, ...(await loadAllowlist()) });
   }
 
   if (req.method === 'GET' && pathname === '/api/audit') {

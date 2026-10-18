@@ -35,7 +35,7 @@ function normalizeEntry(input) {
   else if (name.length > 40) errors.push('昵称不能超过 40 个字符');
   const note = typeof input?.note === 'string' ? input.note.trim() : '';
   if (note.length > 120) errors.push('备注不能超过 120 个字符');
-  return { errors, entry: { uid, name, note } };
+  return { errors, entry: { uid, name, note, owner: false } };
 }
 
 export async function loadAllowlist(file = ALLOWLIST_FILE) {
@@ -45,6 +45,11 @@ export async function loadAllowlist(file = ALLOWLIST_FILE) {
     rules: Array.isArray(json._rules) ? json._rules : [],
     allow: Array.isArray(json.allow) ? json.allow : [],
   };
+}
+
+/** The single whitelist entry flagged as the account owner (主人). */
+export function getOwner(data) {
+  return (data?.allow ?? []).find((row) => row.owner === true) ?? null;
 }
 
 async function writeAllowlist(file, json) {
@@ -75,9 +80,26 @@ export async function removeAllowlistEntry(uid, file = ALLOWLIST_FILE) {
   if (!Number.isInteger(target) || target <= 0) return { ok: false, errors: ['UID 无效'] };
   const { json } = await readRaw(file);
   const allow = Array.isArray(json.allow) ? json.allow : [];
-  const next = allow.filter((row) => Number(row.uid) !== target);
-  if (next.length === allow.length) return { ok: false, errors: ['白名单里没有这个 UID'] };
-  json.allow = next;
+  const row = allow.find((item) => Number(item.uid) === target);
+  if (!row) return { ok: false, errors: ['白名单里没有这个 UID'] };
+  if (row.owner === true) {
+    return { ok: false, errors: ['这是主人，先把主人标记换给别人再移除'] };
+  }
+  json.allow = allow.filter((item) => Number(item.uid) !== target);
   await writeAllowlist(file, json);
   return { ok: true };
+}
+
+/** Mark exactly one whitelist entry as the owner. */
+export async function setAllowlistOwner(uid, file = ALLOWLIST_FILE) {
+  const target = Number(uid);
+  if (!Number.isInteger(target) || target <= 0) return { ok: false, errors: ['UID 无效'] };
+  const { json } = await readRaw(file);
+  const allow = Array.isArray(json.allow) ? json.allow : [];
+  if (!allow.some((row) => Number(row.uid) === target)) {
+    return { ok: false, errors: ['这个 UID 不在白名单里，先加进来再设为主人'] };
+  }
+  json.allow = allow.map((row) => ({ ...row, owner: Number(row.uid) === target }));
+  await writeAllowlist(file, json);
+  return { ok: true, owner: json.allow.find((row) => Number(row.uid) === target) };
 }
