@@ -19,6 +19,7 @@ import { tailAudit } from './audit.mjs';
 import { findChrome, fetchCdpVersion, isCdpUp, launchChrome } from './chrome.mjs';
 import { attachPage, connectCdp, sleep, waitFor } from './cdp.mjs';
 import { captureQr, clearLogin, fetchNickname, openLoginPage, readLoginState } from './bili.mjs';
+import { sendOwnerDm } from './dm.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -338,6 +339,22 @@ async function handleApi(req, res, url) {
     const result = await setAllowlistOwner(Number(ownerMatch[1]));
     if (!result.ok) return sendJson(res, 400, { error: result.errors.join('；'), errors: result.errors });
     return sendJson(res, 200, { ok: true, owner: result.owner, ...(await loadAllowlist()) });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/dm/owner') {
+    const allowlist = await loadAllowlist();
+    const owner = getOwner(allowlist);
+    return sendJson(res, 200, {
+      ok: true,
+      available: true,
+      owner: owner ? { uid: owner.uid, name: owner.name } : null,
+    });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/dm/owner') {
+    const body = await readJsonBody(req);
+    const result = await sendOwnerDm(body.content, { port: state.port });
+    return sendJson(res, result.ok ? 200 : 400, result);
   }
 
   if (req.method === 'GET' && pathname === '/api/audit') {

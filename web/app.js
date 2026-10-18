@@ -339,6 +339,10 @@ function renderAllowlist(data) {
       .join('');
   }
   $('#allow-rules').innerHTML = data.rules.map((rule) => `<li>${esc(rule)}</li>`).join('');
+
+  const owner = data.allow.find((row) => row.owner === true);
+  $('#dm-owner-name').textContent = owner ? `${owner.name}（UID ${owner.uid}）` : '（未标记主人）';
+  $('#btn-dm').disabled = !owner;
 }
 
 async function loadAllowlist() {
@@ -346,8 +350,20 @@ async function loadAllowlist() {
     const data = await api('allowlist');
     state.allowlist = data;
     renderAllowlist(data);
+    await checkDmPanel();
   } catch (error) {
     toast(`读取白名单失败：${error.message}`, 'bad');
+  }
+}
+
+async function checkDmPanel() {
+  try {
+    await api('dm/owner');
+    $('#dm-panel').hidden = false;
+    $('#dm-restart-note').hidden = true;
+  } catch {
+    $('#dm-panel').hidden = true;
+    $('#dm-restart-note').hidden = false;
   }
 }
 
@@ -394,6 +410,38 @@ async function setOwner(uid) {
     await loadStatus();
   } catch (error) {
     toast(error.message, 'bad');
+  }
+}
+
+async function sendOwnerDmFromUi() {
+  const content = $('#dm-content').value.trim();
+  const owner = state.allowlist?.allow.find((row) => row.owner === true);
+  if (!owner) {
+    toast('白名单里还没有标记主人', 'bad');
+    return;
+  }
+  if (!content) {
+    toast('先写点内容', 'bad');
+    return;
+  }
+  if (!window.confirm(`发送给主人 ${owner.name}（UID ${owner.uid}）？\n\n${content}`)) return;
+
+  const button = $('#btn-dm');
+  setBusy(button, true, '发送中…');
+  $('#dm-status').textContent = '正在打开私信页…';
+  try {
+    const result = await api('dm/owner', { method: 'POST', body: JSON.stringify({ content }) });
+    $('#dm-content').value = '';
+    $('#dm-status').textContent = result.verified
+      ? `已发送并确认 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
+      : '已点击发送，但未确认送达';
+    toast(result.verified ? '已发送并确认' : '已发送，未确认', result.verified ? 'ok' : '');
+    await loadStatus();
+  } catch (error) {
+    $('#dm-status').textContent = error.message;
+    toast(error.message, 'bad');
+  } finally {
+    setBusy(button, false);
   }
 }
 
@@ -582,6 +630,7 @@ function bindEvents() {
   $('#btn-attach').addEventListener('click', attachLogin);
   $('#btn-logout').addEventListener('click', logout);
   $('#allow-form').addEventListener('submit', submitAllowlist);
+  $('#btn-dm').addEventListener('click', sendOwnerDmFromUi);
   $('#btn-save-params').addEventListener('click', saveParams);
   $('#btn-audit-refresh').addEventListener('click', loadAudit);
 }

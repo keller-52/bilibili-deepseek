@@ -9,6 +9,7 @@ async function withServer(run, options = {}) {
   try {
     return await run(port);
   } finally {
+    server.closeAllConnections?.();
     await new Promise((resolve) => server.close(resolve));
   }
 }
@@ -88,6 +89,25 @@ test('unknown config keys are rejected without touching the file', async () => {
   });
 });
 
+test('DM availability and validation endpoints answer without sending', async () => {
+  await withServer(async (port) => {
+    const probe = await fetch(`http://127.0.0.1:${port}/api/dm/owner`);
+    assert.equal(probe.status, 200);
+    const info = await probe.json();
+    assert.equal(info.available, true);
+
+    const empty = await fetch(`http://127.0.0.1:${port}/api/dm/owner`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: '' }),
+    });
+    assert.equal(empty.status, 400);
+    const body = await empty.json();
+    assert.equal(body.ok, false);
+    assert.match(body.errors[0], /不能为空/);
+  });
+});
+
 test('mounts under a base path for the DSH plugin', async () => {
   await withServer(
     async (port) => {
@@ -104,6 +124,10 @@ test('mounts under a base path for the DSH plugin', async () => {
 
       const health = await fetch(`${base}/api/health`);
       assert.equal((await health.json()).ok, true);
+
+      const dm = await fetch(`${base}/api/dm/owner`);
+      assert.equal(dm.status, 200);
+      assert.equal((await dm.json()).available, true);
 
       const asset = await fetch(`${base}/app.js`);
       assert.equal(asset.status, 200);

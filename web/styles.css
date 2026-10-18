@@ -576,6 +576,24 @@ input:focus {
   width: 120px;
 }
 
+textarea {
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.16s ease;
+}
+
+textarea:focus {
+  border-color: var(--pink);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

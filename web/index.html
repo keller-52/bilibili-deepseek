@@ -176,6 +176,22 @@
             </div>
             <ul class="rules" id="allow-rules"></ul>
           </div>
+
+          <div class="panel" id="dm-panel" hidden>
+            <h2>给主人发私信</h2>
+            <p class="muted">
+              只发给 <b id="dm-owner-name">（未标记主人）</b>；禁止链接、≤300 字，
+              日 10 / 同一人 3 / 间隔 5 分钟。发送前检查登录态，发送后写审计并截图。
+            </p>
+            <textarea id="dm-content" rows="3" maxlength="300" placeholder="我是小深……"></textarea>
+            <div class="actions">
+              <button class="primary" id="btn-dm" disabled>发送给主人</button>
+              <span class="hint" id="dm-status"></span>
+            </div>
+          </div>
+          <p class="hint" id="dm-restart-note" hidden>
+            私信面板需要重启一次 DSH 才会出现：插件宿主代码在 DSH 启动时加载，当前运行的还是旧版本。
+          </p>
         </section>
 
         <section class="view hidden" id="view-params">
