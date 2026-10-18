@@ -1,6 +1,12 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
+// Works both standalone (`/`) and mounted under the DSH web server
+// (`/bili-duty/`): every API call is resolved relative to the current page.
+const API_ROOT = new URL('api/', document.baseURI);
+const EMBED = new URLSearchParams(window.location.search).get('embed') === '1';
+if (EMBED) document.documentElement.classList.add('embed');
+
 const state = {
   status: null,
   config: null,
@@ -38,7 +44,7 @@ function toast(message, kind = '') {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(new URL(path, API_ROOT), {
     headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
     ...options,
   });
@@ -217,7 +223,7 @@ function startLoginPolling() {
   stopLoginPolling();
   state.qrTimer = setInterval(async () => {
     try {
-      const login = await api('/api/login');
+      const login = await api('login');
       updateLoginCard(login);
       if (login.loggedIn) {
         stopLoginPolling();
@@ -240,7 +246,7 @@ async function startQr() {
   setBusy(button, true, '启动 Chrome…');
   try {
     const headless = !$('#login-headful').checked;
-    const data = await api('/api/login/qr', { method: 'POST', body: JSON.stringify({ headless }) });
+    const data = await api('login/qr', { method: 'POST', body: JSON.stringify({ headless }) });
     showQr(data.image);
     if (data.launch && data.launch.reused === false) toast('已启动专用 Chrome', 'ok');
     if (data.login?.loggedIn) {
@@ -262,7 +268,7 @@ async function refreshQr() {
   const button = $('#btn-qr-refresh');
   setBusy(button, true, '刷新中…');
   try {
-    const data = await api('/api/login/refresh', { method: 'POST' });
+    const data = await api('login/refresh', { method: 'POST' });
     showQr(data.image);
     startLoginPolling();
   } catch (error) {
@@ -277,7 +283,7 @@ async function attachLogin() {
   setBusy(button, true);
   try {
     const port = Number($('#attach-port').value);
-    const data = await api('/api/chrome/attach', { method: 'POST', body: JSON.stringify({ port }) });
+    const data = await api('chrome/attach', { method: 'POST', body: JSON.stringify({ port }) });
     updateLoginCard(data.login ?? {});
     toast(data.login?.loggedIn ? '检测到登录态' : '已连接，但这个 Chrome 还没登录', data.login?.loggedIn ? 'ok' : '');
     await loadStatus();
@@ -293,7 +299,7 @@ async function logout() {
   const button = $('#btn-logout');
   setBusy(button, true);
   try {
-    await api('/api/login/logout', { method: 'POST' });
+    await api('login/logout', { method: 'POST' });
     toast('已退出登录', 'ok');
     updateLoginCard({ loggedIn: false });
     await loadStatus();
@@ -326,7 +332,7 @@ function renderAllowlist(data) {
 
 async function loadAllowlist() {
   try {
-    const data = await api('/api/allowlist');
+    const data = await api('allowlist');
     state.allowlist = data;
     renderAllowlist(data);
   } catch (error) {
@@ -341,7 +347,7 @@ async function submitAllowlist(event) {
   const button = form.querySelector('button[type="submit"]');
   setBusy(button, true);
   try {
-    const data = await api('/api/allowlist', { method: 'POST', body: JSON.stringify(payload) });
+    const data = await api('allowlist', { method: 'POST', body: JSON.stringify(payload) });
     state.allowlist = data;
     renderAllowlist(data);
     form.reset();
@@ -357,7 +363,7 @@ async function submitAllowlist(event) {
 async function deleteAllow(uid) {
   if (!window.confirm(`把 UID ${uid} 从白名单移除？移除后立即生效。`)) return;
   try {
-    const data = await api(`/api/allowlist/${encodeURIComponent(uid)}`, { method: 'DELETE' });
+    const data = await api(`allowlist/${encodeURIComponent(uid)}`, { method: 'DELETE' });
     state.allowlist = data;
     renderAllowlist(data);
     toast('已移除', 'ok');
@@ -445,7 +451,7 @@ function renderConfig(config) {
 
 async function loadConfig() {
   try {
-    const config = await api('/api/config');
+    const config = await api('config');
     renderConfig(config);
   } catch (error) {
     toast(`读取参数失败：${error.message}`, 'bad');
@@ -492,7 +498,7 @@ async function saveParams() {
   setBusy(button, true, '保存中…');
   try {
     const patch = collectPatch();
-    const result = await api('/api/config', { method: 'PUT', body: JSON.stringify({ patch }) });
+    const result = await api('config', { method: 'PUT', body: JSON.stringify({ patch }) });
     renderConfig({ ...state.config, data: result.data, errors: [], warnings: result.warnings ?? [] });
     $('#params-note').textContent = `已保存 ${result.changed?.length ?? 0} 项 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
     toast('参数已保存', 'ok');
@@ -507,7 +513,7 @@ async function saveParams() {
 
 async function loadAudit() {
   try {
-    const data = await api('/api/audit?limit=100');
+    const data = await api('audit?limit=100');
     state.audit = data;
     $('#audit-meta').textContent = data.missing
       ? `还没有 ${data.file}，写操作审批通过后才会产生记录。`
@@ -520,7 +526,7 @@ async function loadAudit() {
 
 async function loadStatus() {
   try {
-    const status = await api('/api/status');
+    const status = await api('status');
     state.status = status;
     $('#app-version').textContent = `v${status.app.version}`;
     renderOverview(status);

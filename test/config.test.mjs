@@ -6,7 +6,7 @@ import path from 'node:path';
 import { loadConfig, savePatch } from '../src/config.mjs';
 import { crossCheck, validatePatch } from '../src/schema.mjs';
 
-const CONFIG_URL = new URL('../config/config.yaml', import.meta.url);
+const CONFIG_URL = new URL('./fixtures/config.yaml', import.meta.url);
 
 test('validatePatch rejects out-of-range and unknown values', () => {
   const result = validatePatch({

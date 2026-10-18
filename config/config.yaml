@@ -1,5 +1,5 @@
 # bili-duty 的唯一参数来源：<工作区>/config/config.yaml
-# 本机路径：G:/dsh-workspace/bilibili deepseek/config/config.yaml
+# 本机路径按仓库根目录解析（相对路径），换盘不用改。
 # ============================================================================
 # 唯一参数来源。bili-guard 读取，主 Agent 无写权限。
 # 改这里 = 改行为；改提示词无效。

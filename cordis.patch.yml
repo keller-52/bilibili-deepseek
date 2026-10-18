@@ -1,0 +1,9 @@
+# bili-duty — DSH bundle patch
+#
+# 装上之后，profile 只要在 `dsh.profile.bundles` 里列出 `bili-duty` 即生效；
+# 插件自己把控制台挂到 DSH 的 web server 上（见 plugin/host.mjs）。
+#
+# 本地开发安装：DSH Desktop → 设置 → 插件 → 添加插件 → 填本目录路径。
+- insert:
+    - id: bili-duty
+      name: bili-duty

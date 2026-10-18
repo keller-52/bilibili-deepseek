@@ -1,11 +1,17 @@
 {
   "name": "bili-duty",
   "version": "0.1.0",
-  "private": true,
-  "description": "B 站 AI 账号的本地控制台：登录态、私信白名单、参数与审计（UI 路线，不碰接口）",
+  "description": "B 站 AI 账号的本地控制台：扫码登录、登录态、私信白名单、参数与审计（UI 路线，不碰接口）",
   "type": "module",
+  "main": "plugin/host.mjs",
+  "exports": {
+    ".": "./plugin/host.mjs",
+    "./client": "./plugin/client.js",
+    "./package.json": "./package.json"
+  },
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": ">=0.1.7-rc.1"
   },
   "scripts": {
     "start": "node src/server.mjs",
@@ -15,8 +21,20 @@
   "keywords": [
     "bilibili",
     "dsh",
+    "dsh-plugin",
     "playwright",
     "cdp"
   ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
   "license": "MIT"
 }

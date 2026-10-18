@@ -903,3 +903,25 @@ input:focus {
     flex-direction: column;
   }
 }
+
+/* Embedded inside the DSH settings page: the host already provides the frame. */
+html.embed .sidebar {
+  display: none;
+}
+
+html.embed .app {
+  grid-template-columns: 1fr;
+  min-height: 0;
+}
+
+html.embed .main {
+  padding: 18px 20px 40px;
+}
+
+html.embed .topbar {
+  margin-bottom: 16px;
+}
+
+html.embed .topbar h1 {
+  font-size: 20px;
+}

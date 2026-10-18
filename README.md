@@ -33,9 +33,33 @@ npm start
 1. **登录 → 启动并显示二维码**。会拉起一个专用 Chrome（默认无头；遇到滑块就勾上「显示 Chrome 窗口」）。
 2. 手机 B 站扫码，确认时选「记住我 / 长期」。状态会在 2.5 秒内变成「已登录 · UID …」。
 3. **私信白名单**里把示例 UID 0 换成真实好友（只加确认过、知道这是 AI 的人）。
+
+`config/dm-allowlist.json` 不入库：首次读取时从 `config/dm-allowlist.example.json` 自动生成，
+你也可以手动 `copy config\dm-allowlist.example.json config\dm-allowlist.json`。
 4. **参数**按默认值先跑；要改就改，保存后写回 YAML。
 
 ![参数页](docs/media/params.png)
+
+## 在 DSH Desktop 里启用（本地插件）
+
+仓库同时是一个 DSH 插件（`dsh.bundle` + `dsh.client`），从**本地目录**装即可，不用发布到 npm：
+
+1. 打开 DSH Desktop → 账号菜单 → **设置 → 插件**。
+2. **添加插件** → 填本仓库的**绝对路径**（例如 `D:\code\bili-duty`）→ 安装。
+   插件管理器会以 `link:` 方式挂上这个目录，之后改代码不用重装。
+3. 按提示**重启 DSH**（bundle 只在启动时组装）。
+4. 重新打开 **设置 → B 站**：扫码登录、白名单、参数、审计都在这一页。
+
+插件把同一份控制台挂到 DSH 自己的 web server 的 `/bili-duty/` 下，
+所以设置页里是**同源** iframe，不用另开端口；也可以直接访问
+`http://127.0.0.1:<DSH 端口>/bili-duty/`。独立运行 `npm start` 仍然可用（7801）——
+两条入口是同一份代码、同一份 `config/` 与 `runtime/`。
+
+> 仓库保持通用：没有本机绝对路径，真实白名单 UID 不入库；
+> `config/dm-allowlist.json` 首次运行会从 `config/dm-allowlist.example.json` 自动生成。
+>
+> 非 Desktop 的 web profile 也可以用 CLI：`dsh plugin --profile web add link:<仓库路径>`，
+> 确认该 profile 的 `dsh.profile.bundles` 里有 `bili-duty` 后重启。
 
 ## 登录是怎么做的（不碰接口）
 
@@ -59,6 +83,8 @@ npm start
 ## 安全边界
 
 - 服务只监听 `127.0.0.1`，不对外网开放。
+- 插件路由挂在 DSH 同源的 `/bili-duty/`，和独立端口一样只在本机可达；
+  **不要**把 DSH 端口转发到局域网 / 公网。
 - 静态页面带 CSP（`default-src 'self'`），没有内联脚本。
 - 写接口校验 `Origin`，拒绝跨站请求。
 - 没有“打开任意网址”的接口；导航目标固定为 B 站登录 / 空间页。
@@ -70,28 +96,33 @@ npm start
 ```
 .
 ├── config/
-│   ├── config.yaml          # 唯一参数来源（控制台逐行改写，保留注释）
-│   └── dm-allowlist.json    # 私信白名单
+│   ├── config.yaml               # 唯一参数来源（控制台逐行改写，保留注释）
+│   ├── dm-allowlist.example.json # 白名单模板（入库）
+│   └── dm-allowlist.json         # 本地生成，gitignore（真实 UID 不入库）
+├── cordis.patch.yml              # DSH bundle patch
 ├── docs/
-│   ├── 技术方案-v4-定稿.md    # 架构、配额、审核、AUTO、合规
-│   ├── 迁移记录.md            # 2026-10-18 环境核对与迁移
-│   └── media/                # 控制台截图
-├── persona/persona.md        # 人格底稿
-├── runtime/                  # memory / drafts / audit（gitignore 数据文件）
+│   ├── 技术方案-v4-定稿.md         # 架构、配额、审核、AUTO、合规
+│   ├── 迁移记录.md                 # 环境核对与迁移
+│   └── media/                     # 控制台截图
+├── plugin/
+│   ├── host.mjs                   # DSH host：把控制台挂到 /bili-duty
+│   └── client.js                  # DSH 设置里的「B 站」一页
+├── persona/persona.md             # 人格底稿
+├── runtime/                       # memory / drafts / audit（数据文件 gitignore）
 ├── src/
-│   ├── server.mjs            # HTTP 服务 + API
-│   ├── cli.mjs               # `node src/cli.mjs status`
-│   ├── cdp.mjs               # 零依赖 CDP 客户端
-│   ├── chrome.mjs            # 定位 / 启动 Chrome
-│   ├── bili.mjs              # 二维码、登录态、昵称、退出
-│   ├── config.mjs            # config.yaml 读写
-│   ├── yaml.mjs              # YAML 子集解析 + 逐行改写
-│   ├── schema.mjs            # 参数目录与校验
-│   ├── allowlist.mjs         # 白名单读写
-│   ├── audit.mjs             # 审计尾读
-│   └── paths.mjs             # 工作区路径
-├── web/                      # 控制台（原生 HTML/CSS/JS）
-└── test/                     # node:test
+│   ├── server.mjs                 # HTTP 服务 + API（可 mount）
+│   ├── cli.mjs                    # `node src/cli.mjs status`
+│   ├── cdp.mjs                    # 零依赖 CDP 客户端
+│   ├── chrome.mjs                 # 定位 / 启动 Chrome
+│   ├── bili.mjs                   # 二维码、登录态、昵称、退出
+│   ├── config.mjs                 # config.yaml 读写
+│   ├── yaml.mjs                   # YAML 子集解析 + 逐行改写
+│   ├── schema.mjs                 # 参数目录与校验
+│   ├── allowlist.mjs              # 白名单读写
+│   ├── audit.mjs                  # 审计尾读
+│   └── paths.mjs                  # 工作区路径
+├── web/                           # 控制台（原生 HTML/CSS/JS）
+└── test/                          # node:test
 ```
 
 ## 参数
@@ -103,7 +134,7 @@ npm start
 ## 开发
 
 ```bash
-npm test          # 24 个用例：YAML、参数校验、白名单、HTTP
+npm test          # 28 个用例：YAML、参数校验、白名单、HTTP、DSH 插件
 node src/cli.mjs status
 node src/cli.mjs status --json
 ```
@@ -118,7 +149,13 @@ node src/cli.mjs status --json
 
 ## 与 DSH 的关系
 
-这个仓库是**控制面**：登录态、白名单、参数、审计路径、运行状态。
+这个仓库同时是**控制面**和**一个 DSH 插件**：
+
+- **host half**（`plugin/host.mjs`）把控制台挂到 DSH 自带 web server 的 `/bili-duty/`，
+  和 DSH 同源，设置页里直接 iframe，不用另开端口；
+- **client half**（`plugin/client.js`）在「设置」里加一页 **B 站**；
+- 独立运行 `npm start` 仍然可用（7801），两条入口共用同一份 `config/` 与 `runtime/`。
+
 执行面按技术方案阶段 1 推进——DSH 通过 Playwright MCP / CDP 驱动同一个专用 Chrome，
 先跑通只读链路（搜索 → 看 → 读评论 → 总结），再进 L1 / L2。
 `node src/cli.mjs status --json` 给 Agent 读状态，不需要解析页面。

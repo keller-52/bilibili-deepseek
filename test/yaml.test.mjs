@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { applyUpdates, parse, setValue } from '../src/yaml.mjs';
 
-const CONFIG_URL = new URL('../config/config.yaml', import.meta.url);
+const CONFIG_URL = new URL('./fixtures/config.yaml', import.meta.url);
 
 test('parses the real config.yaml', async () => {
   const text = await readFile(CONFIG_URL, 'utf8');

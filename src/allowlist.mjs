@@ -1,9 +1,25 @@
-import { readFile, rename, writeFile } from 'node:fs/promises';
-import { ALLOWLIST_FILE } from './paths.mjs';
+import { copyFile, readFile, rename, writeFile } from 'node:fs/promises';
+import { ALLOWLIST_EXAMPLE, ALLOWLIST_FILE } from './paths.mjs';
 
 const MAX_UID = 2_147_483_647;
 
+/** The real allowlist is gitignored; seed it from the committed example. */
+async function ensureFile(file) {
+  if (file !== ALLOWLIST_FILE) return;
+  try {
+    await readFile(file);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    try {
+      await copyFile(ALLOWLIST_EXAMPLE, file);
+    } catch {
+      throw new Error(`缺少 ${ALLOWLIST_EXAMPLE}，无法初始化私信白名单`);
+    }
+  }
+}
+
 async function readRaw(file) {
+  await ensureFile(file);
   const text = await readFile(file, 'utf8');
   return { text, json: JSON.parse(text) };
 }

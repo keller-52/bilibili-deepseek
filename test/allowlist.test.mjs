@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { addAllowlistEntry, loadAllowlist, removeAllowlistEntry } from '../src/allowlist.mjs';
 
-const ALLOWLIST_URL = new URL('../config/dm-allowlist.json', import.meta.url);
+const ALLOWLIST_URL = new URL('./fixtures/dm-allowlist.json', import.meta.url);
 
 async function withTempAllowlist(run) {
   const dir = await mkdtemp(path.join(tmpdir(), 'bili-duty-allow-'));
@@ -18,7 +18,7 @@ async function withTempAllowlist(run) {
   }
 }
 
-test('loads the shipped example allowlist', async () => {
+test('loads the example allowlist fixture', async () => {
   await withTempAllowlist(async (file) => {
     const data = await loadAllowlist(file);
     assert.equal(data.allow.length, 1);

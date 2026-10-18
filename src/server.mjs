@@ -90,7 +90,8 @@ function sameOrigin(req) {
   if (!origin) return true; // curl / same-origin navigation
   try {
     const parsed = new URL(origin);
-    return (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') && Number(parsed.port) === PORT;
+    if (req.headers.host) return parsed.host === req.headers.host;
+    return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
   } catch {
     return false;
   }
@@ -335,11 +336,19 @@ async function handleApi(req, res, url) {
   return sendJson(res, 404, { error: `未知接口：${req.method} ${pathname}` });
 }
 
-async function serveStatic(req, res, url) {
-  const pathname = url.pathname === '/' ? '/index.html' : url.pathname;
-  const decoded = decodeURIComponent(pathname);
-  const filePath = path.join(WEB_DIR, path.normalize(decoded));
-  if (!filePath.startsWith(WEB_DIR)) {
+async function serveStatic(req, res, url, { allowFrame = false } = {}) {
+  const relative = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');
+  let decoded;
+  try {
+    decoded = decodeURIComponent(relative);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bad request');
+    return;
+  }
+
+  const filePath = path.resolve(WEB_DIR, decoded);
+  if (!filePath.startsWith(`${WEB_DIR}${path.sep}`)) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -353,8 +362,7 @@ async function serveStatic(req, res, url) {
       'Content-Type': MIME[path.extname(filePath)] ?? 'application/octet-stream',
       'Cache-Control': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy':
-        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+      'Content-Security-Policy': `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors ${allowFrame ? "'self'" : "'none'"}`,
       'Referrer-Policy': 'no-referrer',
     });
     res.end(body);
@@ -364,21 +372,58 @@ async function serveStatic(req, res, url) {
   }
 }
 
-export function createServer() {
-  return http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', `http://${HOST}:${PORT}`);
+/**
+ * Create the request handler used by both the standalone server and the DSH
+ * plugin mount. `basePath` lets the same app live under `/bili-duty` when it is
+ * mounted behind the DSH web server.
+ */
+export function createApp({ basePath = '', allowFrame = false } = {}) {
+  const prefix = String(basePath).replace(/\/+$/, '');
+
+  return async function app(req, res) {
+    let url;
     try {
-      if (url.pathname.startsWith('/api/')) {
+      url = new URL(req.url ?? '/', `http://${HOST}`);
+    } catch {
+      return sendJson(res, 400, { error: '请求地址无效' });
+    }
+
+    let pathname;
+    try {
+      pathname = decodeURIComponent(url.pathname);
+    } catch {
+      return sendJson(res, 400, { error: '路径编码无效' });
+    }
+
+    if (prefix) {
+      if (pathname === prefix) {
+        res.writeHead(302, { Location: `${prefix}/${url.search}` });
+        res.end();
+        return;
+      }
+      if (!pathname.startsWith(`${prefix}/`)) {
+        return sendJson(res, 404, { error: '未知路径' });
+      }
+      pathname = pathname.slice(prefix.length);
+    }
+
+    const localUrl = new URL(`${pathname}${url.search}`, `http://${HOST}`);
+    try {
+      if (pathname.startsWith('/api/')) {
         if (req.method !== 'GET' && !sameOrigin(req)) {
           return sendJson(res, 403, { error: '拒绝跨站请求' });
         }
-        return await handleApi(req, res, url);
+        return await handleApi(req, res, localUrl);
       }
-      return await serveStatic(req, res, url);
+      return await serveStatic(req, res, localUrl, { allowFrame });
     } catch (error) {
       return sendJson(res, 500, { error: error.message || String(error) });
     }
-  });
+  };
+}
+
+export function createServer(options = {}) {
+  return http.createServer(createApp(options));
 }
 
 export async function start() {

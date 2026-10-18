@@ -6,6 +6,7 @@ export const WEB_DIR = path.join(ROOT, 'web');
 export const CONFIG_DIR = path.join(ROOT, 'config');
 export const CONFIG_FILE = path.join(CONFIG_DIR, 'config.yaml');
 export const ALLOWLIST_FILE = path.join(CONFIG_DIR, 'dm-allowlist.json');
+export const ALLOWLIST_EXAMPLE = path.join(CONFIG_DIR, 'dm-allowlist.example.json');
 export const CHROME_PROFILE = path.join(ROOT, 'chrome-profile');
 export const RUNTIME_DIR = path.join(ROOT, 'runtime');
 

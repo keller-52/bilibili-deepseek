@@ -1,9 +1,12 @@
 node_modules/
 chrome-profile/
+config/dm-allowlist.json
 runtime/audit/*.jsonl
 runtime/drafts/*
 runtime/memory/*
 !runtime/**/.gitkeep
+runtime/*.png
+runtime/*.mjs
 runtime/*.log
 runtime/duty.log
 config/*.tmp-*
