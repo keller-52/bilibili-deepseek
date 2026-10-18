@@ -5,7 +5,7 @@
   "description": "B 站 AI 账号的本地控制台：登录态、私信白名单、参数与审计（UI 路线，不碰接口）",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node src/server.mjs",

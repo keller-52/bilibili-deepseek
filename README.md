@@ -20,7 +20,7 @@
 
 ## 快速开始
 
-需要 **Node.js ≥ 20**（本机 v25.1.0）和 **Google Chrome**（本机 155.0.8059.82）。
+需要 **Node.js ≥ 22**（本机 v25.1.0）和 **Google Chrome**（本机 155.0.8059.82）。
 
 ```bash
 npm start
