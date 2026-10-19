@@ -33,7 +33,7 @@ test('host half registers the /bili-duty prefix on webServer', async () => {
   assert.equal(typeof registered.handler, 'function');
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ['bili_status', 'bili_search', 'bili_read_video', 'bili_watched'],
+    ['bili_status', 'bili_search', 'bili_read_video', 'bili_draft_comment', 'bili_watched'],
   );
   for (const tool of tools) {
     assert.equal(tool.parameters.type, 'object');

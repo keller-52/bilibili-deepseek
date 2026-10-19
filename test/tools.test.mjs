@@ -85,6 +85,19 @@ function fakeDeps(overrides = {}) {
       stop: null,
       config: { errors: [], warnings: [] },
     }),
+    draft: async ({ bvid, content, note }) => ({
+      ok: true,
+      draft: {
+        id: 'draft-abc123-abcdef',
+        status: 'pending',
+        target: { bvid: 'BV1E7wtzaEdq' },
+        content: `@Kylume ${content}`,
+        meta: { note: note ?? '' },
+      },
+      rule: { verdict: 'pass', risk: 'low', reasons: [] },
+      ai: { verdict: 'human', risk: 'medium', reasons: ['AI dry-run'] },
+      requiresHuman: true,
+    }),
     watched: async () => ({
       total: 2,
       file: 'runtime/memory/watched.jsonl',
@@ -115,7 +128,7 @@ test('read-only tools expose raw schemas and render text', async () => {
   const tools = createBiliTools(fakeDeps());
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ['bili_status', 'bili_search', 'bili_read_video', 'bili_watched'],
+    ['bili_status', 'bili_search', 'bili_read_video', 'bili_draft_comment', 'bili_watched'],
   );
   for (const tool of tools) {
     assert.equal(tool.parameters.type, 'object');
@@ -139,6 +152,14 @@ test('read-only tools expose raw schemas and render text', async () => {
   assert.equal(readValue.comments[0].text, sampleComment.text);
   assert.equal(readValue.sort, 'time');
   assert.match(read.output.render({}, readValue)[0].text, /3278/);
+
+  const draft = toolByName(tools, 'bili_draft_comment');
+  const draftValue = await draft.execute({ bvid: 'BV1E7wtzaEdq', content: '讲得清楚', note: '测试' });
+  assert.equal(draftValue.draftId, 'draft-abc123-abcdef');
+  assert.equal(draftValue.status, 'pending');
+  assert.equal(draftValue.content, '@Kylume 讲得清楚');
+  assert.equal(draftValue.requiresHuman, true);
+  assert.match(draft.output.render({}, draftValue)[0].text, /人工批准/);
 
   const statusValue = await toolByName(tools, 'bili_status').execute({});
   assert.equal(statusValue.loggedIn, true);
@@ -166,7 +187,7 @@ test('registerBiliTools registers every tool on the host context', () => {
     },
   };
   const names = registerBiliTools(ctx, fakeDeps());
-  assert.deepEqual(names, ['bili_status', 'bili_search', 'bili_read_video', 'bili_watched']);
+  assert.deepEqual(names, ['bili_status', 'bili_search', 'bili_read_video', 'bili_draft_comment', 'bili_watched']);
   assert.deepEqual(
     registered.map((tool) => tool.name),
     names,

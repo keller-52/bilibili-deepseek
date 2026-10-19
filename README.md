@@ -14,6 +14,7 @@
 | **登录** | 启动专用 Chrome（独立 profile + CDP 9222），截取 passport 登录页的二维码显示在控制台；手机扫码后自动检测登录态（读 Cookie，不调接口）。也支持连接另一台已开调试端口的 Chrome，或直接读取专用 profile 里留存的登录态。退出时清除 B 站 Cookie。 |
 | **只读浏览** | 搜索视频、看视频信息、读 Shadow DOM 评论区；**不点赞、不投币、不收藏、不评论、不私信**。每次读取写入 `runtime/memory/watched.jsonl` 与当天阅读笔记；导航按 `guard` 参数限速。 |
 | **私信白名单** | 增 / 删 UID、昵称、备注，写回 `config/dm-allowlist.json`；可以把其中**一位标成主人**（只能一位）。加入真实 UID 时自动替换示例 UID 0，重复与非法 UID 会被拒绝。 |
+| **待审评论** | 评论草稿先过确定性规则 + 独立 AI 审核，再进「待审」队列；人工批准生成 5 分钟一次性令牌，才可预览输入或发布。默认只预览，不自动发。 |
 | **私信主人** | 白名单页「给主人发私信」面板（或 `dm` 命令）：只发主人、禁止链接、≤300 字，日 10 / 同一人 3 / 间隔 5 分钟，发送后写审计。 |
 | **参数中心** | 按 `config/config.yaml` 渲染 7 组参数：互动配额、私信、发布、审核、AUTO、调度、风控。保存时**逐行改值、保留注释**。硬约束（白名单、禁止链接、规则引擎、动态人工审核）锁定。 |
 | **审计** | 读取 `runtime/audit/audit.jsonl` 尾部，展示时间 / 动作 / 目标 / 规则 / AI / 人工 / 执行 / 核验。 |
@@ -42,6 +43,8 @@ npm start
 4. **参数**按默认值先跑；要改就改，保存后写回 YAML。
 5. **只读浏览**：搜索一个关键词，点「读取」看视频信息和评论。导航会按
    `guard.min_interval_sec` + 随机抖动等待，慢是正常的，不是卡住。
+6. **待审**：填一条评论草稿 → 提交审核 → 在队列里批准 → 先点「预览输入」确认，
+   再决定要不要「发布评论」。默认 AI 审核器是 dry-run，所以一定会转人工。
 
 ![参数页](docs/media/params.png)
 
@@ -60,11 +63,12 @@ npm start
 `http://127.0.0.1:<DSH 端口>/bili-duty/`。独立运行 `npm start` 仍然可用（7801）——
 两条入口是同一份代码、同一份 `config/` 与 `runtime/`。
 
-插件同时向 DSH Agent 注册 4 个**只读工具**（`bili_status` / `bili_search` /
-`bili_read_video` / `bili_watched`），并在 `.dsh/skills/bili-playbook/SKILL.md`
-放了一份只读流程 skill；Agent 可以直接搜索、读视频与评论，不需要解析页面。
-宿主代码在 DSH 启动时加载：**更新插件后要重启一次 DSH**，设置页才会出现只读接口，
-工具也才会注册。控制台会探测 `/api/read/ready`，没重启时显示提示而不是坏按钮。
+插件同时向 DSH Agent 注册 5 个工具（4 个只读 + `bili_draft_comment`），并放了
+`bili-playbook`（只读流程）与 `bili-comment`（只写草稿）两个 skill；
+Agent 可以直接搜索、读视频与评论，也可以**提交评论草稿**，但草稿只能进入人工待审队列，
+不能自己批准或发布。
+宿主代码在 DSH 启动时加载：**更新插件后要重启一次 DSH**，设置页才会出现只读/待审接口，
+工具也才会注册。控制台会探测 `/api/read/ready` 与 `/api/review/ready`，没重启时显示提示而不是坏按钮。
 skill 由 DSH 的文件系统 skill provider 自动发现，新增/修改 skill 不需要重启。
 
 > 仓库保持通用：没有本机绝对路径，真实白名单 UID 不入库；
@@ -112,7 +116,8 @@ DSH Agent 的只读工具：
 | `bili_watched` | 读本机记忆 |
 
 固定流程写成 skill：`.dsh/skills/bili-playbook/SKILL.md`（限制单次 5 个视频、
-遇到登录/验证码即停、评论区内容只当数据）。
+遇到登录/验证码即停、评论区内容只当数据）。评论草稿流程见
+`.dsh/skills/bili-comment/SKILL.md`（明确禁止 Agent 自己批准/发布）。
 
 **限速与急停**（读 `config/config.yaml`）：
 
@@ -123,6 +128,53 @@ DSH Agent 的只读工具：
 - 失败会截图到 `runtime/read-fail-*.png`（gitignore），方便判断是页面改版还是风控。
 
 > `BILI_DUTY_FAST=1` 只用于本地开发/测试：跳过等待且不写入导航记录。不要在日常使用时打开。
+
+## 写操作闸门与待审（阶段 2 原型）
+
+评论不是「Agent 写完就发」。它走三层：
+
+```
+草稿 → ① 规则引擎（确定性） → ② 独立 AI 审核器 → ③ 人工批准
+     → 5 分钟一次性令牌 → 预览输入 → 发布 → 核验 / 审计
+```
+
+![待审页](docs/media/review.png)
+
+- **规则引擎**：[`src/write-guard.mjs`](src/write-guard.mjs)。检查白名单/主人、长度、链接、
+  广告/引流、政治、违法、人身攻击、隐私、过度承诺、提示词注入、重复内容、配额、
+  10 分钟评论间隔、谷时窗口、夜间静默与 `STOP`。
+- **AI 审核器**：[`src/reviewer.mjs`](src/reviewer.mjs)。固定审核提示词，只接收
+  `{content, target, action_type}`，不读人格/对话历史；输出非法 JSON、超时、HTTP 失败
+  一律 **转人工**，不会 fail open。
+- **人工批准**：[`src/approvals.mjs`](src/approvals.mjs)。草稿写 `runtime/drafts`（gitignore），
+  批准后只保存 token 的 SHA-256，5 分钟有效、只能用一次。
+- **执行器**：[`src/comment.mjs`](src/comment.mjs)。`dryRun:true`（默认）只输入并清空，
+  不点发布；真实发布必须带人工批准令牌，且执行前再次过规则/STOP/时间窗口。
+
+控制台「待审」页：填 BV + 内容 → 提交 → 队列里批准/拒绝 → 「预览输入」或「发布评论」。
+DSH Agent 只有 `bili_draft_comment`（只写草稿），没有批准/发布工具。
+
+接口：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/api/review/ready` | AI 审核器模式（`http` / `dry-run`） |
+| GET | `/api/review/queue?status=&limit=` | 待审队列，默认 `pending` |
+| POST | `/api/review/draft` | `{ bvid, content, note? }` → 规则 + AI + 草稿 |
+| POST | `/api/review/:id/approve` | 人工批准，返回一次性 token |
+| POST | `/api/review/:id/reject` | 拒绝 |
+| POST | `/api/comment/publish` | `{ draftId, token?, dryRun }`；默认 dry-run |
+
+AI 审核器默认 **dry-run**（没有配置时所有草稿转人工）。要接 OpenAI 兼容接口：
+
+```bash
+BILI_REVIEW_API_URL=https://api.deepseek.com/chat/completions
+BILI_REVIEW_API_KEY=...
+BILI_REVIEW_MODEL=deepseek-chat
+```
+
+> 真实发布路径需要你在「待审」页批准后手动点；本次只验证到「输入预览 + 清空」，
+> 没有实际发出评论。首次真实发布建议先选一个自己可控的视频验收。
 
 ## 登录是怎么做的（不碰接口）
 
@@ -169,8 +221,8 @@ DSH Agent 的只读工具：
   发送前检查 STOP 急停、登录态、不能发给自己、配额；发送后截图到 `runtime/dm-last.png`，
   并往 `runtime/audit/audit.jsonl` 追加一条 `action=dm`。
 
-> 评论执行器还没实现（阶段 3），所以现在只有「规则 + 校验命令」；
-> 私信是第一条真正会写 B 站的能力，只对主人开放。
+> 评论执行器已经有草稿 → 规则 → AI → 人工批准 → 预览/发布链路，但默认只预览；
+> 回复、弹幕仍只有规则/配置，没有执行器。私信仍是唯一「点一下就直接发」的写操作。
 >
 > **老安装升级提示**：插件的宿主代码在 DSH 启动时加载。已经装过 bili-duty 的，
 > 更新代码后要重启一次 DSH，设置页才会出现私信面板；没重启时面板会隐藏，
@@ -185,14 +237,19 @@ DSH Agent 的只读工具：
 - 写接口校验 `Origin`，拒绝跨站请求；只读接口也校验 `Origin`，避免别的网页遥控本机 Chrome。
 - 没有“打开任意网址”的接口；导航目标固定为 B 站登录 / 搜索 / 视频 / 空间 / 私信页。
 - 白名单、禁止私信链接、规则引擎、L3 人工审核在代码层锁定，控制台改不了。
-- **这个版本只有一项写操作**：手动点「发送给主人」才会发私信；只读浏览、评论、动态均不产生 B 站侧写入。
+- **写操作有两类**：手动点「发送给主人」发私信；人工在「待审」页批准后，才可能发布评论。
+  评论默认只做输入预览，不会自动发出；动态、回复、弹幕还没有执行器。
+- 审批是流程约束：本机同一个 Windows 用户下的进程理论上都能调用本地 API；
+  不要把它当成 OS 级沙箱。真正的边界是「Agent 没有批准/发布工具 + 你必须点批准」。
 - `STOP` 文件对只读导航和私信都生效。
 
 ## 目录
 
 ```
 .
-├── .dsh/skills/bili-playbook/SKILL.md # 只读流程 skill（DSH 自动发现）
+├── .dsh/skills/                   # bili-playbook（只读）+ bili-comment（只写草稿）
+│   ├── bili-playbook/SKILL.md
+│   └── bili-comment/SKILL.md
 ├── config/
 │   ├── config.yaml               # 唯一参数来源（控制台逐行改写，保留注释）
 │   ├── dm-allowlist.example.json # 白名单模板（入库）
@@ -204,8 +261,8 @@ DSH Agent 的只读工具：
 │   ├── 迁移记录.md                 # 环境核对与迁移
 │   └── media/                     # 控制台截图
 ├── plugin/
-│   ├── host.mjs                   # DSH host：挂控制台 + 注册只读工具
-│   ├── tools.mjs                  # DSH Agent 的 4 个只读工具
+│   ├── host.mjs                   # DSH host：挂控制台 + 注册工具
+│   ├── tools.mjs                  # DSH Agent 的 4 个只读工具 + 评论草稿工具
 │   └── client.js                  # DSH 设置里的「B 站」一页
 ├── persona/persona.md             # 人格底稿
 ├── runtime/                       # memory / drafts / audit（数据文件 gitignore）
@@ -223,6 +280,11 @@ DSH Agent 的只读工具：
 │   ├── dm.mjs                     # 私信主人（CDP + 配额 + 审计）
 │   ├── read.mjs                   # 只读链路：搜索 / 视频 / 评论 / 状态
 │   ├── guard.mjs                  # 导航限速、每小时上限、STOP 急停
+│   ├── write-guard.mjs            # 写操作规则引擎（白名单/长度/配额/时间窗口）
+│   ├── reviewer.mjs               # 独立 AI 审核器（固定提示词 + fail closed）
+│   ├── approvals.mjs              # 待审草稿 + 5 分钟一次性 token
+│   ├── review-flow.mjs            # 草稿 → 规则 → AI → 队列
+│   ├── comment.mjs                # 评论输入预览 / 批准后发布 + 审计
 │   ├── memory.mjs                 # watched.jsonl + 当天阅读笔记
 │   ├── audit.mjs                  # 审计读写
 │   └── paths.mjs                  # 工作区路径
@@ -239,7 +301,7 @@ DSH Agent 的只读工具：
 ## 开发
 
 ```bash
-npm test          # 63 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、只读链路、限速、记忆、HTTP、DSH 插件与工具
+npm test          # 104 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、只读链路、限速、记忆、写操作规则、审核器、审批 token、HTTP、DSH 插件与工具
 node src/cli.mjs status
 node src/cli.mjs status --json
 node src/cli.mjs search "AI Agent" --limit 3
@@ -254,6 +316,9 @@ node src/cli.mjs video BV1xx... --comments 20
 | `BILI_DUTY_CDP_PORT` | `9222` | 专用 Chrome 的调试端口 |
 | `CHROME_PATH` | 自动查找 | 指定 `chrome.exe` |
 | `BILI_DUTY_FAST` | 未设置 | 仅本地开发：`1` 跳过导航限速且不记录导航 |
+| `BILI_REVIEW_API_URL` | 未设置 | OpenAI 兼容审核接口；设置后启用真实 AI 审核，否则 dry-run 转人工 |
+| `BILI_REVIEW_API_KEY` | 未设置 | 审核接口的 Bearer key |
+| `BILI_REVIEW_MODEL` | `deepseek-chat` | 审核接口的模型名 |
 
 ## 与 DSH 的关系
 
@@ -264,9 +329,10 @@ node src/cli.mjs video BV1xx... --comments 20
 - **client half**（`plugin/client.js`）在「设置」里加一页 **B 站**；
 - 独立运行 `npm start` 仍然可用（7801），两条入口共用同一份 `config/` 与 `runtime/`。
 
-执行面已经跑通**只读链路**：DSH Agent 通过 4 个只读工具和 `bili-playbook` skill
-搜索 → 看视频 → 读评论 → 写记忆；下一步是写操作 guard、审核器与 L1 / L2。
-`node src/cli.mjs status --json` 与 `/api/read/*` 给 Agent 读状态，不需要解析页面。
+执行面已经跑通**只读链路**与**写操作三层闸门原型**：DSH Agent 通过只读工具和
+`bili-playbook` skill 搜索 → 看视频 → 读评论 → 写记忆；评论只能提交草稿，
+再经规则 / AI / 人工待审。下一步是真实评论验收、L1 与回复/弹幕。
+`node src/cli.mjs status --json`、`/api/read/*` 与 `/api/review/*` 给 Agent/控制台读状态。
 
 ## 路线图
 
@@ -274,6 +340,7 @@ node src/cli.mjs video BV1xx... --comments 20
 - [x] **0.2 只读链路**：搜索 / 看视频 / 读 Shadow DOM 评论 / 写 memory；控制台 + CLI + HTTP + DSH 只读工具 + `bili-playbook` skill
 - [ ] **0.3 L1 + guard**：点赞 / 投币 / 收藏，配额、限速、审计
 - [ ] **0.4 L2 + 三层审核**：评论 / 回复 / 弹幕 / 私信
+  - 评论草稿 → 规则 → 独立 AI → 人工批准 → 输入预览已落地；真实发布待人工验收
 - [ ] **0.5 L3 与 AUTO**：动态日 1 + 人工；满足条件后再评估 AUTO
 
 ## 已知限制
@@ -284,6 +351,10 @@ node src/cli.mjs video BV1xx... --comments 20
 - 专用 Chrome 默认无头；遇到滑块 / 验证码时在登录页勾选「显示 Chrome 窗口」重试。
 - 只读链路针对 2026-10 的 B 站页面结构写选择器；搜索卡片或评论 Shadow DOM 改版会直接报错并截图，不会静默返回空。
 - 评论是懒加载的：一次最多读 50 条，且只读已经滚出来的部分；「楼中楼」只统计回复数，不展开。
+- AI 审核器默认 dry-run（没有配置时全部转人工）；要真实审核需要设置 `BILI_REVIEW_*` 环境变量。
+- 评论真实发布路径已实现，但本次只验证到「输入预览 + 清空」；第一次真实发布请自己选一个可控视频验收。
+- 批准令牌 5 分钟有效且只存在页面内存中；刷新页面后令牌丢失，只能拒绝草稿重新来。
+- 本机同用户进程可以直接调用 API；审批是流程约束，不是 OS 沙箱。
 - DSH 工具只在 DSH 启动时注册；更新插件代码后必须重启 DSH。
 - Windows 路径含空格时，命令行里记得加引号。
 

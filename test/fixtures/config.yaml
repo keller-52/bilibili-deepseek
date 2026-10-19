@@ -34,6 +34,7 @@ l2:
   reply_per_day: 10
   total_per_day: 10               # 评论 + 回复合计
   per_person_per_day: 1           # 同一个人每天最多 1 条（防拉锯）
+  comment_min_interval_sec: 600   # 两条评论/回复之间至少 10 分钟
   danmaku_per_day: 5
 
   # 私信：好友白名单，已知情，配额放宽

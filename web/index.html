@@ -20,6 +20,7 @@
         <nav class="nav" id="nav">
           <button class="active" data-view="overview"><span>概览</span></button>
           <button data-view="read"><span>只读浏览</span></button>
+          <button data-view="review"><span>待审</span></button>
           <button data-view="login"><span>登录</span></button>
           <button data-view="allowlist"><span>私信白名单</span></button>
           <button data-view="params"><span>参数</span></button>
@@ -69,6 +70,11 @@
               <span class="stat-label">只读记忆</span>
               <strong id="stat-watched">0 个</strong>
               <small id="stat-watched-sub">runtime/memory</small>
+            </article>
+            <article class="card stat">
+              <span class="stat-label">待审草稿</span>
+              <strong id="stat-review">0 条</strong>
+              <small id="stat-review-sub">规则 → AI → 人工</small>
             </article>
           </div>
 
@@ -165,6 +171,57 @@
                 <tbody><tr><td colspan="3" class="empty">还没有记录。</td></tr></tbody>
               </table>
             </div>
+          </div>
+        </section>
+
+        <section class="view hidden" id="view-review">
+          <div class="panel">
+            <h2>起草评论</h2>
+            <p class="muted">
+              三层闸门：确定性规则 → 独立 AI 审核 → 人工批准。这里只写本机草稿；
+              批准后还要手动点「预览输入」或「发布评论」，不会自动发出去。
+            </p>
+            <p class="hint" id="review-ai-state">检查审核器状态…</p>
+            <p class="hint" id="review-restart-note" hidden></p>
+            <form id="review-form" class="form-grid" autocomplete="off">
+              <label>视频 BV / 链接<input name="bvid" required maxlength="120" placeholder="BV1xx… 或视频链接" /></label>
+              <label>备注（可选）<input name="note" maxlength="120" placeholder="给审核/自己看的一句话" /></label>
+              <label class="wide">评论内容
+                <textarea name="content" rows="4" maxlength="300" required placeholder="只写你要说的话；缺失时会自动补 @主人。"></textarea>
+              </label>
+              <div class="wide actions">
+                <button class="primary" type="submit">提交审核</button>
+                <span class="hint" id="review-submit-hint"></span>
+              </div>
+            </form>
+            <div id="review-result"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>待审队列</h2>
+              <button class="ghost" id="btn-review-refresh">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table id="review-table">
+                <thead><tr><th>时间</th><th>视频 / 内容</th><th>规则 / AI</th><th></th></tr></thead>
+                <tbody><tr><td colspan="4" class="empty">还没有待审草稿。</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel" id="review-approved" hidden>
+            <div class="panel-head">
+              <h2>已批准 · 5 分钟内可执行</h2>
+              <button class="ghost" id="btn-review-close">关闭</button>
+            </div>
+            <p class="hint" id="review-approved-meta"></p>
+            <pre class="draft-content" id="review-approved-content"></pre>
+            <div class="actions">
+              <button class="ghost" id="btn-review-preview">预览输入（不发布）</button>
+              <button class="primary" id="btn-review-publish">发布评论</button>
+            </div>
+            <p class="hint" id="review-exec-status"></p>
           </div>
         </section>
 

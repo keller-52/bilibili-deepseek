@@ -8,6 +8,7 @@ import { readStatus, readVideo, searchVideos } from '../src/read.mjs';
 import { readWatched } from '../src/memory.mjs';
 import { loadConfig } from '../src/config.mjs';
 import { runtimePaths } from '../src/paths.mjs';
+import { draftComment } from '../src/review-flow.mjs';
 
 const text = (value) => [{ type: 'text', text: value }];
 
@@ -85,6 +86,21 @@ function renderWatched(value) {
   return lines.join('\n');
 }
 
+function renderDraft(value) {
+  return [
+    `草稿 ${value.draftId} · ${value.status}`,
+    `视频：${value.target}`,
+    `规则：${value.ruleVerdict}${value.risk ? `（${value.risk}）` : ''}`,
+    `AI：${value.aiVerdict}`,
+    value.reasons.length ? `原因：${value.reasons.join('；')}` : '',
+    '人工批准后才会执行；不会自动发布。',
+    '',
+    value.content,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 function renderStatus(value) {
   return [
     `Chrome：${value.cdp ? `已连接（端口 ${value.port}）` : '未启动'}`,
@@ -106,6 +122,7 @@ export function createBiliTools({
   read = readVideo,
   status = readStatus,
   watched = readWatched,
+  draft = draftComment,
 } = {}) {
   return [
     {
@@ -331,6 +348,55 @@ export function createBiliTools({
             ? { watched: result.memory.watched, note: result.memory.note }
             : undefined,
           tookMs: result.tookMs,
+        };
+      },
+    },
+    {
+      name: 'bili_draft_comment',
+      description:
+        '为一个 B 站视频创建评论草稿：先过确定性规则和独立 AI 审核，再进入控制台「待审」页。只写本机草稿，不会发布评论；必须由人工在控制台批准后才会执行。',
+      parameters: object(
+        {
+          bvid: { type: 'string', description: 'BV 号或完整视频链接' },
+          content: { type: 'string', description: '评论草稿；缺失 @主人 时会自动补上' },
+          note: { type: 'string', description: '可选：给审核/人工看的一句备注' },
+        },
+        ['bvid', 'content'],
+      ),
+      output: {
+        schema: object(
+          {
+            draftId: { type: 'string' },
+            status: { type: 'string' },
+            target: { type: 'string' },
+            content: { type: 'string' },
+            ruleVerdict: { type: 'string' },
+            aiVerdict: { type: 'string' },
+            risk: { type: 'string' },
+            reasons: array({ type: 'string' }),
+            requiresHuman: { type: 'boolean' },
+            note: { type: 'string' },
+          },
+          ['draftId', 'status', 'target', 'content', 'ruleVerdict', 'aiVerdict', 'risk', 'reasons', 'requiresHuman'],
+        ),
+        render: (_args, value) => text(renderDraft(value)),
+      },
+      timeoutMs: 120_000,
+      isConcurrencySafe: () => false,
+      async execute(args) {
+        const result = await draft({ bvid: args.bvid, content: args.content, note: args.note ?? '' });
+        if (!result.ok) throw new Error((result.errors ?? ['草稿被拒绝']).join('；'));
+        return {
+          draftId: result.draft.id,
+          status: result.draft.status,
+          target: result.draft.target?.bvid ?? args.bvid,
+          content: result.draft.content,
+          ruleVerdict: result.rule?.verdict ?? 'human',
+          aiVerdict: result.ai?.verdict ?? 'human',
+          risk: result.ai?.risk ?? result.rule?.risk ?? 'medium',
+          reasons: [...(result.rule?.reasons ?? []), ...(result.ai?.reasons ?? [])],
+          requiresHuman: true,
+          note: result.draft.meta?.note ?? '',
         };
       },
     },

@@ -19,6 +19,7 @@ export const PARAM_GROUPS = [
       { path: 'l2.reply_per_day', label: '每天回复上限', kind: 'int', min: 0, max: 50, unit: '条' },
       { path: 'l2.total_per_day', label: '每天评论 + 回复合计', kind: 'int', min: 0, max: 50, unit: '条' },
       { path: 'l2.per_person_per_day', label: '对同一个人每天最多', kind: 'int', min: 0, max: 10, unit: '条' },
+      { path: 'l2.comment_min_interval_sec', label: '两条评论/回复最小间隔', kind: 'int', min: 60, max: 86400, unit: '秒' },
       { path: 'l2.danmaku_per_day', label: '每天弹幕上限', kind: 'int', min: 0, max: 20, unit: '条' },
     ],
   },

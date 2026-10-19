@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createServer } from '../src/server.mjs';
 
 async function withServer(run, options = {}) {
@@ -151,6 +154,69 @@ test('DM availability and validation endpoints answer without sending', async ()
     const body = await empty.json();
     assert.equal(body.ok, false);
     assert.match(body.errors[0], /不能为空/);
+  });
+});
+
+test('review draft, queue and approval token flow', async () => {
+  const drafts = await mkdtemp(path.join(os.tmpdir(), 'bili-review-http-'));
+  try {
+    await withServer(
+      async (port) => {
+        const ready = await fetch(`http://127.0.0.1:${port}/api/review/ready`);
+        assert.equal(ready.status, 200);
+        assert.equal((await ready.json()).ai, 'http');
+
+        const created = await fetch(`http://127.0.0.1:${port}/api/review/draft`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bvid: 'BV1E7wtzaEdq', content: '这个视频讲得清楚' }),
+        });
+        assert.equal(created.status, 200);
+        const draft = await created.json();
+        assert.equal(draft.ok, true);
+        assert.equal(draft.draft.status, 'pending');
+        assert.match(draft.draft.content, /^@Kylume /);
+        assert.equal(draft.ai.verdict, 'pass');
+
+        const queue = await fetch(`http://127.0.0.1:${port}/api/review/queue?status=pending`);
+        assert.equal(queue.status, 200);
+        const queueBody = await queue.json();
+        assert.equal(queueBody.total, 1);
+        assert.equal(queueBody.entries[0].approval, null);
+
+        const approved = await fetch(`http://127.0.0.1:${port}/api/review/${draft.draft.id}/approve`, {
+          method: 'POST',
+        });
+        assert.equal(approved.status, 200);
+        const approvedBody = await approved.json();
+        assert.equal(approvedBody.ok, true);
+        assert.equal(typeof approvedBody.token, 'string');
+        assert.equal(approvedBody.draft.status, 'approved');
+
+        const missingToken = await fetch(`http://127.0.0.1:${port}/api/comment/publish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ draftId: draft.draft.id, dryRun: false }),
+        });
+        assert.equal(missingToken.status, 400);
+        assert.match((await missingToken.json()).errors[0], /令牌/);
+      },
+      {
+        reviewTransport: async () => ({ verdict: 'pass', risk: 'low', reasons: ['技术观察'] }),
+        draftsDir: drafts,
+      },
+    );
+  } finally {
+    await rm(drafts, { recursive: true, force: true });
+  }
+});
+
+test('cross-origin review queue reads are refused', async () => {
+  await withServer(async (port) => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/review/queue`, {
+      headers: { Origin: 'https://evil.example' },
+    });
+    assert.equal(response.status, 403);
   });
 });
 

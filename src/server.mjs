@@ -22,6 +22,10 @@ import { captureQr, clearLogin, fetchNickname, openLoginPage, readLoginState } f
 import { sendOwnerDm } from './dm.mjs';
 import { readStatus, readVideo, searchVideos } from './read.mjs';
 import { readWatched } from './memory.mjs';
+import { draftComment } from './review-flow.mjs';
+import { approveDraft, listDrafts, rejectDraft } from './approvals.mjs';
+import { publishComment } from './comment.mjs';
+import { reviewerFromEnv } from './reviewer.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -146,6 +150,9 @@ export async function buildStatus() {
     missing: true,
     file: path.join(paths.memory, 'watched.jsonl'),
   }));
+  const pending = await listDrafts({ draftsDir: paths.drafts, status: 'pending', limit: 100 })
+    .then((data) => data.total)
+    .catch(() => 0);
   const chrome = await chromeInfo();
   const login = await quickLogin().catch(() => ({ cdp: chrome.cdp, loggedIn: false }));
 
@@ -169,6 +176,7 @@ export async function buildStatus() {
       file: watched.file,
       last: watched.entries?.[0] ?? null,
     },
+    review: { pending },
     config: { errors: config.errors, warnings: config.warnings, path: CONFIG_FILE },
     paths: {
       root: ROOT,
@@ -256,7 +264,7 @@ async function pollLogin({ withNickname = false } = {}) {
   }
 }
 
-async function handleApi(req, res, url) {
+async function handleApi(req, res, url, { reviewTransport = null, draftsDir = null } = {}) {
   const { pathname } = url;
 
   if (req.method === 'GET' && pathname === '/api/health') {
@@ -410,6 +418,78 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, await readWatched(paths.memory, limit == null ? 20 : Number(limit)));
   }
 
+  if (req.method === 'GET' && pathname.startsWith('/api/review/') && !sameOrigin(req)) {
+    return sendJson(res, 403, { error: '拒绝跨站请求' });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/review/ready') {
+    return sendJson(res, 200, {
+      ok: true,
+      ai: reviewTransport ? 'http' : 'dry-run',
+      humanRequired: true,
+      message: reviewTransport
+        ? 'AI 审核器已配置；通过后仍需人工批准'
+        : 'AI 审核器未配置，所有草稿都会转人工',
+    });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/review/queue') {
+    const config = await loadConfig();
+    const paths = runtimePaths(config.data);
+    const status = url.searchParams.get('status') ?? 'pending';
+    const limit = url.searchParams.get('limit');
+    return sendJson(
+      res,
+      200,
+      await listDrafts({ draftsDir: draftsDir ?? paths.drafts, status, limit: limit == null ? 20 : Number(limit) }),
+    );
+  }
+
+  if (req.method === 'POST' && pathname === '/api/review/draft') {
+    const body = await readJsonBody(req);
+    const result = await draftComment({
+      bvid: body.bvid ?? body.url ?? '',
+      content: body.content,
+      note: body.note ?? '',
+      reviewTransport,
+      draftsDir: draftsDir ?? undefined,
+    });
+    return sendJson(res, result.ok ? 200 : 400, result);
+  }
+
+  const approveMatch = /^\/api\/review\/(draft-[a-z0-9-]+)\/approve$/.exec(pathname);
+  if (req.method === 'POST' && approveMatch) {
+    const config = await loadConfig();
+    const paths = runtimePaths(config.data);
+    const result = await approveDraft(approveMatch[1], { draftsDir: draftsDir ?? paths.drafts });
+    return sendJson(res, result.ok ? 200 : 400, result);
+  }
+
+  const rejectMatch = /^\/api\/review\/(draft-[a-z0-9-]+)\/reject$/.exec(pathname);
+  if (req.method === 'POST' && rejectMatch) {
+    const config = await loadConfig();
+    const paths = runtimePaths(config.data);
+    const body = await readJsonBody(req);
+    const result = await rejectDraft(rejectMatch[1], { draftsDir: draftsDir ?? paths.drafts, reason: body.reason ?? '' });
+    return sendJson(res, result.ok ? 200 : 400, result);
+  }
+
+  if (req.method === 'POST' && pathname === '/api/comment/publish') {
+    const body = await readJsonBody(req);
+    const realSend = body.dryRun === false;
+    if (realSend && !body.token) {
+      return sendJson(res, 400, { ok: false, errors: ['真实发布需要人工批准令牌（token）'] });
+    }
+    const result = await publishComment({
+      draftId: body.draftId,
+      token: body.token,
+      port: state.port,
+      dryRun: !realSend,
+      draftsDir: draftsDir ?? undefined,
+    });
+    return sendJson(res, result.ok ? 200 : 400, result);
+  }
+
   if (req.method === 'GET' && pathname === '/api/audit') {
     const config = await loadConfig();
     const paths = runtimePaths(config.data);
@@ -461,8 +541,10 @@ async function serveStatic(req, res, url, { allowFrame = false } = {}) {
  * plugin mount. `basePath` lets the same app live under `/bili-duty` when it is
  * mounted behind the DSH web server.
  */
-export function createApp({ basePath = '', allowFrame = false } = {}) {
+export function createApp({ basePath = '', allowFrame = false, reviewTransport = reviewerFromEnv(), draftsDir = null } = {}) {
   const prefix = String(basePath).replace(/\/+$/, '');
+  const reviewerTransport = reviewTransport;
+  const draftDirectory = draftsDir;
 
   return async function app(req, res) {
     let url;
@@ -497,7 +579,7 @@ export function createApp({ basePath = '', allowFrame = false } = {}) {
         if (req.method !== 'GET' && !sameOrigin(req)) {
           return sendJson(res, 403, { error: '拒绝跨站请求' });
         }
-        return await handleApi(req, res, localUrl);
+        return await handleApi(req, res, localUrl, { reviewTransport: reviewerTransport, draftsDir: draftDirectory });
       }
       return await serveStatic(req, res, localUrl, { allowFrame });
     } catch (error) {

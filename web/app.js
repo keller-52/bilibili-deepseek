@@ -17,11 +17,13 @@ const state = {
   statusTimer: null,
   lastQrImage: '',
   readReady: false,
+  approved: null,
 };
 
 const VIEW_META = {
   overview: { title: '概览', sub: '账号运行前的准备：登录、白名单、参数。' },
   read: { title: '只读浏览', sub: '搜索、看视频、读评论；不点赞、不评论、不发送。' },
+  review: { title: '待审', sub: '规则 → AI → 人工；批准后才可能执行。' },
   login: { title: '登录', sub: '扫码登录，或读取专用 Chrome 里已有的登录态。' },
   allowlist: { title: '私信白名单', sub: '只有名单里的人能收到 AI 私信。' },
   params: { title: '参数', sub: '配额、调度、审核、风控。默认值刻意保守。' },
@@ -93,6 +95,7 @@ function go(view) {
   if (view === 'params') loadConfig();
   if (view === 'allowlist') loadAllowlist();
   if (view === 'read') loadReadView();
+  if (view === 'review') loadReviewView();
 }
 
 function statusPills(chrome, login) {
@@ -154,6 +157,12 @@ function renderOverview(status) {
   $('#stat-watched-sub').textContent = memory.last?.title
     ? `最近：${memory.last.title.slice(0, 24)}`
     : '只读浏览会写入这里';
+
+  const review = status.review ?? { pending: 0 };
+  $('#stat-review').textContent = `${review.pending ?? 0} 条`;
+  $('#stat-review-sub').textContent = review.pending
+    ? '去「待审」页批准或拒绝'
+    : '规则 → AI → 人工';
 
   const warnings = [];
   for (const error of config.errors) warnings.push({ kind: 'bad', text: error });
@@ -774,6 +783,210 @@ async function readVideoFromUi(bvid) {
   }
 }
 
+function verdictTag(verdict) {
+  const kind = verdict === 'pass' ? 'ok' : verdict === 'reject' ? 'bad' : '';
+  return `<span class="tag ${kind}">${esc(verdict ?? '?')}</span>`;
+}
+
+function reviewReasons(draft) {
+  const reasons = [...(draft.rule?.reasons ?? []), ...(draft.ai?.reasons ?? [])].filter(Boolean);
+  return reasons.length ? reasons.map((reason) => `<div class="read-sub">${esc(reason)}</div>`).join('') : '';
+}
+
+function renderReviewResult(data) {
+  const box = $('#review-result');
+  if (!data.ok) {
+    box.innerHTML = `<div class="banner">${esc((data.errors ?? ['草稿被拒绝']).join('；'))}</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="banner warn">
+    草稿 <code>${esc(data.draft.id)}</code> 已进入待审：规则 ${verdictTag(data.rule?.verdict)}
+    · AI ${verdictTag(data.ai?.verdict)} · 需要人工批准
+    ${reviewReasons(data.draft)}
+  </div>`;
+}
+
+function renderReviewQueue(data) {
+  const tbody = $('#review-table tbody');
+  if (!data.entries?.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">还没有待审草稿。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.entries
+    .map((draft) => {
+      const target = draft.target?.bvid ?? '—';
+      const rule = draft.rule?.verdict ?? '?';
+      const ai = draft.ai?.verdict ?? '?';
+      return `<tr>
+        <td class="muted">${esc(formatTime(draft.createdAt))}</td>
+        <td><b>${esc(target)}</b>
+          <div class="review-content">${esc(draft.content)}</div>
+          ${draft.meta?.note ? `<div class="read-sub">备注：${esc(draft.meta.note)}</div>` : ''}
+        </td>
+        <td>规则 ${verdictTag(rule)}<br />AI ${verdictTag(ai)}${reviewReasons(draft)}</td>
+        <td class="row-actions">
+          <button class="ghost" data-review-approve="${esc(draft.id)}">批准</button>
+          <button class="ghost danger" data-review-reject="${esc(draft.id)}">拒绝</button>
+          <button class="ghost" data-review-preview="${esc(draft.id)}">预览</button>
+        </td>
+      </tr>`;
+    })
+    .join('');
+}
+
+async function loadReviewReady() {
+  try {
+    const ready = await api('review/ready');
+    $('#review-ai-state').textContent = `AI 审核器：${ready.ai === 'http' ? '已配置' : 'dry-run（全部转人工）'} · 人工批准必经`;
+    $('#review-restart-note').hidden = true;
+  } catch (error) {
+    $('#review-ai-state').textContent = '';
+    $('#review-restart-note').hidden = false;
+    $('#review-restart-note').textContent = `待审接口不可用：${error.message}。更新插件后需要重启一次 DSH。`;
+  }
+}
+
+async function loadReviewQueue() {
+  try {
+    const data = await api('review/queue?status=pending&limit=20');
+    renderReviewQueue(data);
+  } catch (error) {
+    toast(`读取待审队列失败：${error.message}`, 'bad');
+  }
+}
+
+async function loadReviewView() {
+  await Promise.all([loadReviewReady(), loadReviewQueue()]);
+}
+
+function showApproved(entry) {
+  state.approved = entry;
+  const draft = entry.draft;
+  $('#review-approved').hidden = false;
+  $('#review-approved-meta').textContent = `${draft.id} · ${draft.target?.bvid ?? ''} · 令牌 ${formatTime(draft.approval?.expiresAt)} 前有效`;
+  $('#review-approved-content').textContent = draft.content;
+  $('#review-exec-status').textContent = '';
+  $('#review-approved').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function submitReviewDraft(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const bvid = String(data.get('bvid') ?? '').trim();
+  const content = String(data.get('content') ?? '').trim();
+  const note = String(data.get('note') ?? '').trim();
+  if (!bvid || !content) return;
+
+  const button = form.querySelector('button[type="submit"]');
+  setBusy(button, true, '审核中…');
+  $('#review-submit-hint').textContent = '规则引擎 + AI 审核中…';
+  try {
+    const result = await api('review/draft', {
+      method: 'POST',
+      body: JSON.stringify({ bvid, content, note }),
+    });
+    renderReviewResult(result);
+    if (result.ok) {
+      $('#review-submit-hint').textContent = '已进入待审；批准后才会执行。';
+      await loadReviewQueue();
+    } else {
+      $('#review-submit-hint').textContent = '规则或 AI 拒绝了这条草稿。';
+    }
+  } catch (error) {
+    $('#review-submit-hint').textContent = error.message;
+    toast(`提交失败：${error.message}`, 'bad');
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function approveReview(id) {
+  if (!window.confirm('批准这条草稿？批准会生成 5 分钟有效的一次性令牌，不会立即发布。')) return;
+  try {
+    const data = await api(`review/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+    showApproved({ draft: data.draft, token: data.token });
+    toast('已批准；再点「预览输入」或「发布评论」', 'ok');
+    await loadReviewQueue();
+  } catch (error) {
+    toast(`批准失败：${error.message}`, 'bad');
+  }
+}
+
+async function rejectReview(id) {
+  const reason = window.prompt('拒绝原因（可选）：', '');
+  if (reason === null) return;
+  try {
+    await api(`review/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+    if (state.approved?.draft.id === id) {
+      state.approved = null;
+      $('#review-approved').hidden = true;
+    }
+    toast('已拒绝', 'ok');
+    await loadReviewQueue();
+  } catch (error) {
+    toast(`拒绝失败：${error.message}`, 'bad');
+  }
+}
+
+async function previewCommentDraft(draftId, button) {
+  setBusy(button, true, '预览中…');
+  $('#review-exec-status').textContent = '正在打开视频页并输入草稿（不会点发布）…';
+  try {
+    const result = await api('comment/publish', {
+      method: 'POST',
+      body: JSON.stringify({ draftId, dryRun: true }),
+    });
+    const message = result.dryRun ? '输入预览通过，已清空输入框（没有发布）' : '预览完成';
+    $('#review-exec-status').textContent = message;
+    toast(message, 'ok');
+  } catch (error) {
+    $('#review-exec-status').textContent = error.message;
+    toast(`预览失败：${error.message}`, 'bad');
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function previewPending(id, button) {
+  await previewCommentDraft(id, button);
+}
+
+async function publishApproved() {
+  if (!state.approved) return;
+  const draft = state.approved.draft;
+  if (!window.confirm(`发布这条评论到 ${draft.target?.bvid}？\n\n${draft.content}`)) return;
+  const button = $('#btn-review-publish');
+  setBusy(button, true, '发布中…');
+  $('#review-exec-status').textContent = '正在打开视频页并发布…';
+  try {
+    const result = await api('comment/publish', {
+      method: 'POST',
+      body: JSON.stringify({ draftId: draft.id, token: state.approved.token, dryRun: false }),
+    });
+    const message = result.verified
+      ? '已发布，并在评论区看到这条内容'
+      : result.ok
+        ? '已点击发布，但暂未在评论区看到（可能审核中）'
+        : (result.errors ?? ['发布失败']).join('；');
+    $('#review-exec-status').textContent = message;
+    toast(result.ok ? '已执行' : `发布失败：${message}`, result.ok ? 'ok' : 'bad');
+    if (result.ok) {
+      state.approved = null;
+      $('#review-approved').hidden = true;
+      await Promise.all([loadReviewQueue(), loadStatus(), loadAudit()]);
+    }
+  } catch (error) {
+    $('#review-exec-status').textContent = error.message;
+    toast(`发布失败：${error.message}`, 'bad');
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 async function loadStatus() {
   try {
     const status = await api('status');
@@ -803,6 +1016,12 @@ function bindEvents() {
     if (owner) setOwner(owner.dataset.ownerUid);
     const read = event.target.closest('[data-read-bvid]');
     if (read) readVideoFromUi(read.dataset.readBvid);
+    const approve = event.target.closest('[data-review-approve]');
+    if (approve) approveReview(approve.dataset.reviewApprove);
+    const reject = event.target.closest('[data-review-reject]');
+    if (reject) rejectReview(reject.dataset.reviewReject);
+    const preview = event.target.closest('[data-review-preview]');
+    if (preview) previewPending(preview.dataset.reviewPreview, preview);
   });
 
   $('#btn-qr').addEventListener('click', startQr);
@@ -818,6 +1037,16 @@ function bindEvents() {
     $('#read-detail').hidden = true;
   });
   $('#btn-watched-refresh').addEventListener('click', loadWatchedView);
+  $('#review-form').addEventListener('submit', submitReviewDraft);
+  $('#btn-review-refresh').addEventListener('click', loadReviewView);
+  $('#btn-review-close').addEventListener('click', () => {
+    state.approved = null;
+    $('#review-approved').hidden = true;
+  });
+  $('#btn-review-preview').addEventListener('click', (event) => {
+    if (state.approved) previewCommentDraft(state.approved.draft.id, event.currentTarget);
+  });
+  $('#btn-review-publish').addEventListener('click', publishApproved);
 }
 
 async function boot() {
