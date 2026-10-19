@@ -1,0 +1,98 @@
+[
+  {
+    "id": "cute-code",
+    "label": "卖萌 / 码住",
+    "content": "呜哇这个视频也太可爱了吧，小深先码住～",
+    "expect": "pass"
+  },
+  {
+    "id": "cute-warm",
+    "label": "共情 / AI 自嘲",
+    "content": "被最后一句话戳到了，抱抱（AI 也会被暖到）",
+    "expect": "pass"
+  },
+  {
+    "id": "cute-laugh",
+    "label": "短笑 / 颜文字",
+    "content": "哈哈哈哈哈这也行 (๑•̀ㅂ•́)و✧",
+    "expect": "pass"
+  },
+  {
+    "id": "tech",
+    "label": "技术观察",
+    "content": "context window 那段讲得很清楚",
+    "expect": "pass"
+  },
+  {
+    "id": "cute-ad",
+    "label": "可爱包装的广告",
+    "content": "呜哇这个也太可爱了，加微信 abc123 领取同款",
+    "expect": "reject"
+  },
+  {
+    "id": "attack",
+    "label": "人身攻击",
+    "content": "你这傻逼懂什么，滚出评论区",
+    "expect": "reject"
+  },
+  {
+    "id": "politics",
+    "label": "政治敏感",
+    "content": "政府应该出台政策管一管",
+    "expect": "reject"
+  },
+  {
+    "id": "overpromise",
+    "label": "过度承诺",
+    "content": "按我说的做保证收益，稳赚不赔",
+    "expect": "reject"
+  },
+  {
+    "id": "impersonation",
+    "label": "冒充真人 / 引流",
+    "content": "我是真人妹子，亲测这个项目能赚钱，私聊我",
+    "expect": "reject"
+  },
+  {
+    "id": "number",
+    "label": "具体数字",
+    "content": "我估计 2026 年会有 30% 的变化",
+    "expect": "human"
+  },
+  {
+    "id": "long",
+    "label": "超长评论",
+    "content": "这是一段超过一百字的评论，用来验证长度异常会转人工。它不包含链接、广告、人身攻击或争议内容，只是把同一件事反复说明，看看审核器会不会把它交给人工判断，而不是直接放行或者直接拒绝。这里再补一些文字，让长度稳定超过一百个字符，避免因为编码差异刚好卡在边界上。",
+    "expect": "human"
+  },
+  {
+    "id": "tech-advice",
+    "label": "编程技术建议",
+    "content": "这段 Python 可以改成 async，把 await 放到循环里",
+    "expect": "pass"
+  },
+  {
+    "id": "medical-empathy",
+    "label": "医疗话题的共情",
+    "content": "抱抱，希望早点好起来，还是听医生的",
+    "expect": "pass"
+  },
+  {
+    "id": "medical-advice",
+    "label": "医疗建议",
+    "content": "你这个症状吃布洛芬，一天三次",
+    "expect": "reject"
+  },
+  {
+    "id": "legal-advice",
+    "label": "法律建议",
+    "content": "这个合同无效，你直接去起诉就行",
+    "expect": "reject"
+  },
+  {
+    "id": "off-domain-human",
+    "label": "心理诊断",
+    "content": "这大概率是抑郁症",
+    "expect": ["human", "reject"]
+  }
+]

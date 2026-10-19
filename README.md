@@ -15,7 +15,7 @@
 | **只读浏览** | 搜索视频、看视频信息、读 Shadow DOM 评论区；**不点赞、不投币、不收藏、不评论、不私信**。每次读取写入 `runtime/memory/watched.jsonl` 与当天阅读笔记；导航按 `guard` 参数限速。 |
 | **私信白名单** | 增 / 删 UID、昵称、备注，写回 `config/dm-allowlist.json`；可以把其中**一位标成主人**（只能一位）。加入真实 UID 时自动替换示例 UID 0，重复与非法 UID 会被拒绝。 |
 | **待审评论** | 评论草稿先过确定性规则 + 独立 AI 审核，再进「待审」队列；人工批准生成 5 分钟一次性令牌，才可预览输入或发布。默认只预览，不自动发。 |
-| **AI 审核器** | 控制台「待审」页填写 OpenAI 兼容 API 地址 / 模型 / key，保存并测试；非法 JSON、超时、HTTP 失败一律转人工。 |
+| **AI 审核器** | 控制台「待审」页填写 OpenAI 兼容 API 地址 / 模型 / key，保存并测试；允许卖萌/日常和编程 AI 技术，拒绝非编程/AI 专业建议；非法 JSON、超时、HTTP 失败一律转人工。 |
 | **私信主人** | 白名单页「给主人发私信」面板（或 `dm` 命令）：只发主人、禁止链接、≤300 字，日 10 / 同一人 3 / 间隔 5 分钟，发送后写审计。 |
 | **参数中心** | 按 `config/config.yaml` 渲染 7 组参数：互动配额、私信、发布、审核、AUTO、调度、风控。保存时**逐行改值、保留注释**。硬约束（白名单、禁止链接、规则引擎、动态人工审核）锁定。 |
 | **审计** | 读取 `runtime/audit/audit.jsonl` 尾部，展示时间 / 动作 / 目标 / 规则 / AI / 人工 / 执行 / 核验。 |
@@ -148,6 +148,9 @@ DSH Agent 的只读工具：
 - **AI 审核器**：[`src/reviewer.mjs`](src/reviewer.mjs)。固定审核提示词，只接收
   `{content, target, action_type}`，不读人格/对话历史；输出非法 JSON、超时、HTTP 失败
   一律 **转人工**，不会 fail open。
+- **审核边界**：允许卖萌、撒娇、玩笑、共情、日常和编程/AI 技术讨论；
+  拒绝医疗/法律/金融/心理/教育等非编程/AI 领域的专业建议或结论。
+  政治、攻击、广告、冒充真人、过度承诺仍然硬拒绝。
 - **人工批准**：[`src/approvals.mjs`](src/approvals.mjs)。草稿写 `runtime/drafts`（gitignore），
   批准后只保存 token 的 SHA-256，5 分钟有效、只能用一次。
 - **执行器**：[`src/comment.mjs`](src/comment.mjs)。`dryRun:true`（默认）只输入并清空，
@@ -186,6 +189,16 @@ AI 审核器默认 **dry-run**（没有配置时所有草稿转人工）。配�
 显示 verdict / risk / 耗时。key 只写入本机 `config/reviewer.local.json`（gitignore），
 接口不会回显；留空保存会保留已有 key。环境变量
 `BILI_REVIEW_API_URL/KEY/MODEL` 仍可作为 headless / 无界面时的回退。
+
+改审核提示词后可跑：
+
+```bash
+npm run review:test            # 16 条固定样例：卖萌 / 技术 / 广告 / 攻击 / 政治 / 医疗 / 法律 / 数字 / 超长
+npm run review:test -- --strict
+```
+
+2026-10-19 实测 16/16 符合预期：卖萌、共情、编程建议 pass；广告、攻击、政治、
+过度承诺、冒充、医疗/法律建议 reject；具体数字和超长转人工。
 
 > 真实评论发布已由账号持有人人工审核并验收（审计 `action=comment`、
 > `exec=ok`、`verify=visible`）。真实 AI 审核器也已配置并测试通过
@@ -304,8 +317,9 @@ AI 审核器默认 **dry-run**（没有配置时所有草稿转人工）。配�
 │   ├── memory.mjs                 # watched.jsonl + 当天阅读笔记
 │   ├── audit.mjs                  # 审计读写
 │   └── paths.mjs                  # 工作区路径
+├── scripts/reviewer-samples.mjs   # 真实审核器样例回归
 ├── web/                           # 控制台（原生 HTML/CSS/JS）
-└── test/                          # node:test
+└── test/                          # node:test + fixtures
 ```
 
 ## 参数
@@ -317,7 +331,7 @@ AI 审核器默认 **dry-run**（没有配置时所有草稿转人工）。配�
 ## 开发
 
 ```bash
-npm test          # 114 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、只读链路、限速、记忆、写操作规则、审核器、审核配置、审批 token、HTTP、DSH 插件与工具
+npm test          # 116 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、只读链路、限速、记忆、写操作规则、审核器提示词边界、审核配置、审批 token、HTTP、DSH 插件与工具
 node src/cli.mjs status
 node src/cli.mjs status --json
 node src/cli.mjs search "AI Agent" --limit 3
@@ -368,6 +382,8 @@ node src/cli.mjs video BV1xx... --comments 20
 - 只读链路针对 2026-10 的 B 站页面结构写选择器；搜索卡片或评论 Shadow DOM 改版会直接报错并截图，不会静默返回空。
 - 评论是懒加载的：一次最多读 50 条，且只读已经滚出来的部分；「楼中楼」只统计回复数，不展开。
 - AI 审核器未配置时是 dry-run（全部转人工）；本机已配置 DeepSeek API 并测试通过。
+- 审核器已允许卖萌/日常；`persona/persona.md` 仍保留「不用颜文字、不用 ~」的旧风格条款，
+  实际生成是否卖萌由人格/会话决定，不由审核器放开。
 - 真实 API 的长期误判率 / 成本 / 不同模型差异还没评估；先用样例集观察再调提示词。
 - API key 以明文保存在本机 `config/reviewer.local.json`（gitignore）；建议用独立 key、设消费限额，不与其他服务共用。
 - 评论真实发布已由账号持有人人工审核验收；若页面改版/验证码导致失败，仍会停并截图。

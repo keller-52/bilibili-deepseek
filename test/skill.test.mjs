@@ -32,4 +32,6 @@ test('bili-comment skill is draft-only and forbids publishing', async () => {
   assert.match(text, /不能批准/);
   assert.match(text, /没有.*批准\/发布工具|没有.*批准/);
   assert.match(text, /不要调用任何 `\/approve`/);
+  assert.match(text, /卖萌/);
+  assert.match(text, /不要.*医疗/);
 });

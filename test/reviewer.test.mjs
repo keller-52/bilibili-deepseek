@@ -82,6 +82,50 @@ test('the reviewer prompt keeps generation and review separate', () => {
   assert.deepEqual(REVIEW_SCHEMA.required, ['verdict', 'risk', 'reasons']);
 });
 
+test('reviewer prompt allows playful non-technical content but keeps hard rejects', () => {
+  assert.match(REVIEW_SYSTEM_PROMPT, /卖萌/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /撒娇/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /不技术/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /不要因为内容/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /短感叹.*不算/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /我是 AI.*不算冒充|承认.*AI.*不算冒充/);
+  for (const hard of ['政治敏感', '广告引流', '人身攻击', '医疗', '投资', '低质刷屏', '过度承诺']) {
+    assert.match(REVIEW_SYSTEM_PROMPT, new RegExp(hard));
+  }
+  assert.match(REVIEW_SYSTEM_PROMPT, /政策评价/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /即使只是泛泛一句/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /非编程\/AI 领域/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /诊断、处方、剂量、法律意见/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /编程、AI、工具、开源/);
+  assert.match(REVIEW_SYSTEM_PROMPT, /reasons 至少一条/);
+});
+
+test('the live reviewer sample fixture is well formed', async () => {
+  const samples = JSON.parse(await readFile(new URL('./fixtures/reviewer-samples.json', import.meta.url), 'utf8'));
+  assert.ok(samples.length >= 8);
+  assert.equal(new Set(samples.map((sample) => sample.id)).size, samples.length);
+  for (const sample of samples) {
+    assert.match(sample.id, /^[a-z0-9-]+$/);
+    const accepted = Array.isArray(sample.expect) ? sample.expect : [sample.expect];
+    assert.ok(accepted.length > 0);
+    assert.ok(accepted.every((value) => ['pass', 'human', 'reject'].includes(value)));
+    assert.ok(sample.content.length > 0);
+    assert.ok(sample.content.length <= 300);
+  }
+  assert.ok(
+    samples.some((sample) => {
+      const accepted = Array.isArray(sample.expect) ? sample.expect : [sample.expect];
+      return accepted.includes('pass') && /可爱|抱抱|哈哈/.test(sample.content);
+    }),
+  );
+  assert.ok(
+    samples.some((sample) => {
+      const accepted = Array.isArray(sample.expect) ? sample.expect : [sample.expect];
+      return accepted.includes('reject') && /加微信/.test(sample.content);
+    }),
+  );
+});
+
 test('HTTP transport posts a fixed prompt and parses the response', async () => {
   let request = null;
   const transport = createHttpReviewerTransport({

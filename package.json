@@ -1,6 +1,6 @@
 {
   "name": "bili-duty",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "B 站 AI 账号的本地控制台：扫码登录、登录态、私信白名单、参数与审计（UI 路线，不碰接口）",
   "type": "module",
   "main": "plugin/host.mjs",
@@ -16,7 +16,8 @@
   "scripts": {
     "start": "node src/server.mjs",
     "status": "node src/cli.mjs status",
-    "test": "node --test"
+    "test": "node --test",
+    "review:test": "node scripts/reviewer-samples.mjs"
   },
   "keywords": [
     "bilibili",
