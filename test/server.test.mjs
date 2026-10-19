@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -204,6 +205,8 @@ test('review draft, queue and approval token flow', async () => {
       {
         reviewTransport: async () => ({ verdict: 'pass', risk: 'low', reasons: ['技术观察'] }),
         draftsDir: drafts,
+        reviewNow: new Date(2026, 9, 19, 20, 0, 0),
+        reviewEntries: [],
       },
     );
   } finally {
@@ -218,6 +221,125 @@ test('cross-origin review queue reads are refused', async () => {
     });
     assert.equal(response.status, 403);
   });
+});
+
+test('reviewer config is saved from the console APIs without echoing the key', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'bili-reviewer-http-'));
+  const file = path.join(dir, 'reviewer.local.json');
+  try {
+    await withServer(
+      async (port) => {
+        const initial = await fetch(`http://127.0.0.1:${port}/api/review/config`);
+        assert.equal(initial.status, 200);
+        const initialBody = await initial.json();
+        assert.equal(initialBody.mode, 'dry-run');
+        assert.equal(initialBody.hasKey, false);
+
+        const saved = await fetch(`http://127.0.0.1:${port}/api/review/config`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: 'https://api.example.com/chat/completions',
+            model: 'review-model',
+            apiKey: 'sk-http-test',
+          }),
+        });
+        assert.equal(saved.status, 200);
+        const savedBody = await saved.json();
+        assert.equal(savedBody.ok, true);
+        assert.equal(savedBody.status.mode, 'http');
+        assert.equal(savedBody.status.hasKey, true);
+        assert.equal(savedBody.status.apiKey, undefined);
+
+        const ready = await fetch(`http://127.0.0.1:${port}/api/review/ready`);
+        assert.equal(ready.status, 200);
+        assert.equal((await ready.json()).ai, 'http');
+
+        const after = await fetch(`http://127.0.0.1:${port}/api/review/config`);
+        const afterBody = await after.json();
+        assert.equal(afterBody.apiKey, undefined);
+        assert.equal(afterBody.endpointHost, 'api.example.com');
+
+        const cleared = await fetch(`http://127.0.0.1:${port}/api/review/config`, { method: 'DELETE' });
+        assert.equal(cleared.status, 200);
+        assert.equal((await cleared.json()).status.mode, 'dry-run');
+      },
+      { reviewerFile: file },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('review test requires a configured reviewer', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'bili-reviewer-empty-'));
+  const file = path.join(dir, 'reviewer.local.json');
+  try {
+    await withServer(
+      async (port) => {
+        const response = await fetch(`http://127.0.0.1:${port}/api/review/test`, { method: 'POST' });
+        assert.equal(response.status, 400);
+        assert.match((await response.json()).errors[0], /dry-run/);
+      },
+      { reviewerFile: file },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('reviewer test endpoint calls the configured OpenAI-compatible API', async () => {
+  const mock = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      let verdict = 'pass';
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const prompt = body.messages?.[1]?.content ?? '';
+        verdict = prompt.includes('加微信') ? 'reject' : 'pass';
+      } catch {
+        verdict = 'human';
+      }
+      const content = JSON.stringify({ verdict, risk: verdict === 'reject' ? 'high' : 'low', reasons: ['mock reviewer'] });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { content } }] }));
+    });
+  });
+  await new Promise((resolve) => mock.listen(0, '127.0.0.1', resolve));
+  const mockPort = mock.address().port;
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'bili-reviewer-mock-'));
+  const file = path.join(dir, 'reviewer.local.json');
+  try {
+    await withServer(
+      async (port) => {
+        const saved = await fetch(`http://127.0.0.1:${port}/api/review/config`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: `http://127.0.0.1:${mockPort}/chat`,
+            model: 'mock-model',
+            apiKey: '',
+          }),
+        });
+        assert.equal(saved.status, 200);
+
+        const tested = await fetch(`http://127.0.0.1:${port}/api/review/test`, { method: 'POST' });
+        assert.equal(tested.status, 200);
+        const body = await tested.json();
+        assert.equal(body.ok, true);
+        assert.equal(body.mode, 'http');
+        assert.equal(body.results.length, 2);
+        assert.equal(body.results[0].review.verdict, 'pass');
+        assert.equal(body.results[1].review.verdict, 'reject');
+        assert.match(body.results[1].review.reasons.join('；'), /mock reviewer/);
+      },
+      { reviewerFile: file },
+    );
+  } finally {
+    await new Promise((resolve) => mock.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('mounts under a base path for the DSH plugin', async () => {

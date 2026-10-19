@@ -176,13 +176,39 @@
 
         <section class="view hidden" id="view-review">
           <div class="panel">
+            <h2>AI 审核器</h2>
+            <p class="hint" id="review-ai-state">检查审核器状态…</p>
+            <p class="hint" id="review-restart-note" hidden></p>
+            <form id="review-config-form" class="form-grid" autocomplete="off">
+              <label>API 地址
+                <input name="endpoint" maxlength="500" placeholder="https://api.deepseek.com/chat/completions" />
+              </label>
+              <label>模型
+                <input name="model" maxlength="120" value="deepseek-chat" placeholder="deepseek-chat" />
+              </label>
+              <label class="wide">API Key
+                <input name="apiKey" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空保留已保存的 key" />
+              </label>
+              <div class="wide actions">
+                <button class="primary" type="submit">保存配置</button>
+                <button class="ghost" type="button" id="btn-review-test">保存并测试</button>
+                <button class="ghost danger" type="button" id="btn-review-clear">清除配置</button>
+                <span class="hint" id="review-config-hint"></span>
+              </div>
+            </form>
+            <div id="review-test-result"></div>
+            <p class="hint">
+              地址必须是 OpenAI 兼容的 <code>/chat/completions</code> 接口；key 只写入本机
+              <code>config/reviewer.local.json</code>（gitignore），不会回显。
+            </p>
+          </div>
+
+          <div class="panel">
             <h2>起草评论</h2>
             <p class="muted">
               三层闸门：确定性规则 → 独立 AI 审核 → 人工批准。这里只写本机草稿；
               批准后还要手动点「预览输入」或「发布评论」，不会自动发出去。
             </p>
-            <p class="hint" id="review-ai-state">检查审核器状态…</p>
-            <p class="hint" id="review-restart-note" hidden></p>
             <form id="review-form" class="form-grid" autocomplete="off">
               <label>视频 BV / 链接<input name="bvid" required maxlength="120" placeholder="BV1xx… 或视频链接" /></label>
               <label>备注（可选）<input name="note" maxlength="120" placeholder="给审核/自己看的一句话" /></label>

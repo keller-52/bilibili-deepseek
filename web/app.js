@@ -834,15 +834,106 @@ function renderReviewQueue(data) {
     .join('');
 }
 
-async function loadReviewReady() {
+function renderReviewConfig(status) {
+  const mode = status.mode === 'http'
+    ? `已配置 · ${status.endpointHost || status.endpoint || ''} · ${status.model || '—'}`
+    : 'dry-run（全部转人工）';
+  const key = status.hasKey ? 'key 已保存' : '没有 key';
+  const source = status.source === 'file' ? '本机配置' : status.source === 'env' ? '环境变量' : '未配置';
+  $('#review-ai-state').textContent = `AI 审核器：${mode} · ${key} · ${source} · 人工批准必经`;
+  const form = $('#review-config-form');
+  form.querySelector('[name="endpoint"]').value = status.endpoint || '';
+  form.querySelector('[name="model"]').value = status.model || 'deepseek-chat';
+  const keyInput = form.querySelector('[name="apiKey"]');
+  keyInput.value = '';
+  keyInput.placeholder = status.hasKey ? '已保存（留空保留）' : '输入 API key（本地服务可留空）';
+  $('#review-restart-note').hidden = true;
+  $('#review-config-hint').textContent = status.error ? status.error : '';
+}
+
+async function loadReviewConfig() {
   try {
-    const ready = await api('review/ready');
-    $('#review-ai-state').textContent = `AI 审核器：${ready.ai === 'http' ? '已配置' : 'dry-run（全部转人工）'} · 人工批准必经`;
-    $('#review-restart-note').hidden = true;
+    const status = await api('review/config');
+    renderReviewConfig(status);
+    return status;
   } catch (error) {
     $('#review-ai-state').textContent = '';
     $('#review-restart-note').hidden = false;
-    $('#review-restart-note').textContent = `待审接口不可用：${error.message}。更新插件后需要重启一次 DSH。`;
+    $('#review-restart-note').textContent = `审核配置接口不可用：${error.message}。更新插件后需要重启一次 DSH。`;
+    return null;
+  }
+}
+
+async function runReviewerTest(button) {
+  setBusy(button, true, '测试中…');
+  $('#review-config-hint').textContent = '正在用两条固定样例调用审核器…';
+  try {
+    const result = await api('review/test', { method: 'POST' });
+    const rows = result.results
+      .map((item) => {
+        const review = item.review ?? {};
+        return `<div class="review-test-row">
+          <b>${esc(item.label)}</b> ${verdictTag(review.verdict)}
+          <span class="muted">risk ${esc(review.risk ?? '?')} · ${Math.round((review.elapsedMs ?? 0) / 1000)}s</span>
+          ${(review.reasons ?? []).map((reason) => `<div class="read-sub">${esc(reason)}</div>`).join('')}
+        </div>`;
+      })
+      .join('');
+    $('#review-test-result').innerHTML = `<div class="banner warn">测试完成（2 条固定样例，不写草稿）${rows}</div>`;
+    $('#review-config-hint').textContent = '测试完成';
+    toast('审核器测试完成', 'ok');
+    await loadReviewConfig();
+  } catch (error) {
+    $('#review-config-hint').textContent = error.message;
+    $('#review-test-result').innerHTML = `<div class="banner">${esc(error.message)}</div>`;
+    toast(`测试失败：${error.message}`, 'bad');
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function saveReviewConfig({ test = false, button = null } = {}) {
+  const form = $('#review-config-form');
+  const data = new FormData(form);
+  const endpoint = String(data.get('endpoint') ?? '').trim();
+  const model = String(data.get('model') ?? '').trim();
+  const apiKey = String(data.get('apiKey') ?? '').trim();
+  if (!endpoint) {
+    toast('先填写审核 API 地址', 'bad');
+    return;
+  }
+  const submitButton = button ?? form.querySelector('button[type="submit"]');
+  setBusy(submitButton, true, test ? '保存并测试…' : '保存中…');
+  $('#review-config-hint').textContent = '保存中…';
+  try {
+    await api('review/config', {
+      method: 'PUT',
+      body: JSON.stringify({ endpoint, model, apiKey }),
+    });
+    $('#review-config-hint').textContent = '已保存；后续草稿会使用这个审核器。';
+    await loadReviewConfig();
+    toast('审核配置已保存', 'ok');
+    if (test) await runReviewerTest($('#btn-review-test'));
+  } catch (error) {
+    $('#review-config-hint').textContent = error.message;
+    toast(`保存失败：${error.message}`, 'bad');
+  } finally {
+    setBusy(submitButton, false);
+  }
+}
+
+async function clearReviewConfig(button) {
+  if (!window.confirm('清除本机审核器配置？之后所有草稿都会转人工（dry-run）。')) return;
+  setBusy(button, true, '清除中…');
+  try {
+    await api('review/config', { method: 'DELETE' });
+    $('#review-test-result').innerHTML = '';
+    await loadReviewConfig();
+    toast('已清除审核配置', 'ok');
+  } catch (error) {
+    toast(`清除失败：${error.message}`, 'bad');
+  } finally {
+    setBusy(button, false);
   }
 }
 
@@ -856,7 +947,7 @@ async function loadReviewQueue() {
 }
 
 async function loadReviewView() {
-  await Promise.all([loadReviewReady(), loadReviewQueue()]);
+  await Promise.all([loadReviewConfig(), loadReviewQueue()]);
 }
 
 function showApproved(entry) {
@@ -1038,6 +1129,16 @@ function bindEvents() {
   });
   $('#btn-watched-refresh').addEventListener('click', loadWatchedView);
   $('#review-form').addEventListener('submit', submitReviewDraft);
+  $('#review-config-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    saveReviewConfig();
+  });
+  $('#btn-review-test').addEventListener('click', (event) => {
+    saveReviewConfig({ test: true, button: event.currentTarget });
+  });
+  $('#btn-review-clear').addEventListener('click', (event) => {
+    clearReviewConfig(event.currentTarget);
+  });
   $('#btn-review-refresh').addEventListener('click', loadReviewView);
   $('#btn-review-close').addEventListener('click', () => {
     state.approved = null;

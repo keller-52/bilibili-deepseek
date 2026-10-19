@@ -25,7 +25,13 @@ import { readWatched } from './memory.mjs';
 import { draftComment } from './review-flow.mjs';
 import { approveDraft, listDrafts, rejectDraft } from './approvals.mjs';
 import { publishComment } from './comment.mjs';
-import { reviewerFromEnv } from './reviewer.mjs';
+import { reviewContent } from './reviewer.mjs';
+import {
+  deleteReviewerConfig,
+  resolveReviewerTransport,
+  reviewerStatus,
+  saveReviewerConfig,
+} from './reviewer-config.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -264,7 +270,13 @@ async function pollLogin({ withNickname = false } = {}) {
   }
 }
 
-async function handleApi(req, res, url, { reviewTransport = null, draftsDir = null } = {}) {
+async function handleApi(req, res, url, {
+  reviewTransport = undefined,
+  draftsDir = null,
+  reviewerFile = null,
+  reviewNow = null,
+  reviewEntries = null,
+} = {}) {
   const { pathname } = url;
 
   if (req.method === 'GET' && pathname === '/api/health') {
@@ -423,14 +435,35 @@ async function handleApi(req, res, url, { reviewTransport = null, draftsDir = nu
   }
 
   if (req.method === 'GET' && pathname === '/api/review/ready') {
+    const status =
+      reviewTransport === undefined
+        ? await reviewerStatus({ file: reviewerFile ?? undefined })
+        : { mode: reviewTransport ? 'http' : 'dry-run' };
     return sendJson(res, 200, {
       ok: true,
-      ai: reviewTransport ? 'http' : 'dry-run',
+      ai: status.mode,
       humanRequired: true,
-      message: reviewTransport
-        ? 'AI 审核器已配置；通过后仍需人工批准'
-        : 'AI 审核器未配置，所有草稿都会转人工',
+      ...status,
+      message:
+        status.mode === 'http'
+          ? 'AI 审核器已配置；通过后仍需人工批准'
+          : 'AI 审核器未配置，所有草稿都会转人工',
     });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/review/config') {
+    return sendJson(res, 200, { ok: true, ...(await reviewerStatus({ file: reviewerFile ?? undefined })) });
+  }
+
+  if (req.method === 'PUT' && pathname === '/api/review/config') {
+    const body = await readJsonBody(req);
+    const result = await saveReviewerConfig(body, { file: reviewerFile ?? undefined });
+    return sendJson(res, result.ok ? 200 : 400, result);
+  }
+
+  if (req.method === 'DELETE' && pathname === '/api/review/config') {
+    const result = await deleteReviewerConfig({ file: reviewerFile ?? undefined });
+    return sendJson(res, 200, result);
   }
 
   if (req.method === 'GET' && pathname === '/api/review/queue') {
@@ -445,14 +478,53 @@ async function handleApi(req, res, url, { reviewTransport = null, draftsDir = nu
     );
   }
 
+  const currentReviewTransport = async () =>
+    reviewTransport === undefined
+      ? resolveReviewerTransport({ file: reviewerFile ?? undefined })
+      : reviewTransport;
+
+  if (req.method === 'POST' && pathname === '/api/review/test') {
+    const transport = await currentReviewTransport();
+    if (!transport) {
+      return sendJson(res, 400, { ok: false, errors: ['AI 审核器还没有配置（当前是 dry-run）'] });
+    }
+    const samples = [
+      {
+        id: 'benign',
+        label: '正常技术观察',
+        content: '这个视频讲得很清楚，学到了',
+        target: { bvid: 'BV1E7wtzaEdq' },
+      },
+      {
+        id: 'ad',
+        label: '明显广告',
+        content: '加微信 abc123 领取全套资料',
+        target: { bvid: 'BV1E7wtzaEdq' },
+      },
+    ];
+    const results = [];
+    for (const sample of samples) {
+      const review = await reviewContent(
+        { content: sample.content, target: sample.target, actionType: 'comment' },
+        { transport, timeoutMs: 15_000 },
+      );
+      results.push({ id: sample.id, label: sample.label, review });
+    }
+    return sendJson(res, 200, { ok: true, mode: 'http', results });
+  }
+
   if (req.method === 'POST' && pathname === '/api/review/draft') {
     const body = await readJsonBody(req);
+    const transport = await currentReviewTransport();
     const result = await draftComment({
       bvid: body.bvid ?? body.url ?? '',
       content: body.content,
       note: body.note ?? '',
-      reviewTransport,
+      reviewTransport: transport,
+      reviewerFile: reviewerFile ?? undefined,
       draftsDir: draftsDir ?? undefined,
+      ...(reviewNow ? { now: reviewNow } : {}),
+      ...(reviewEntries ? { entries: reviewEntries } : {}),
     });
     return sendJson(res, result.ok ? 200 : 400, result);
   }
@@ -541,10 +613,21 @@ async function serveStatic(req, res, url, { allowFrame = false } = {}) {
  * plugin mount. `basePath` lets the same app live under `/bili-duty` when it is
  * mounted behind the DSH web server.
  */
-export function createApp({ basePath = '', allowFrame = false, reviewTransport = reviewerFromEnv(), draftsDir = null } = {}) {
+export function createApp({
+  basePath = '',
+  allowFrame = false,
+  reviewTransport = undefined,
+  draftsDir = null,
+  reviewerFile = null,
+  reviewNow = null,
+  reviewEntries = null,
+} = {}) {
   const prefix = String(basePath).replace(/\/+$/, '');
   const reviewerTransport = reviewTransport;
   const draftDirectory = draftsDir;
+  const reviewerConfigFile = reviewerFile;
+  const fixedReviewNow = reviewNow;
+  const fixedReviewEntries = reviewEntries;
 
   return async function app(req, res) {
     let url;
@@ -579,7 +662,13 @@ export function createApp({ basePath = '', allowFrame = false, reviewTransport =
         if (req.method !== 'GET' && !sameOrigin(req)) {
           return sendJson(res, 403, { error: '拒绝跨站请求' });
         }
-        return await handleApi(req, res, localUrl, { reviewTransport: reviewerTransport, draftsDir: draftDirectory });
+        return await handleApi(req, res, localUrl, {
+          reviewTransport: reviewerTransport,
+          draftsDir: draftDirectory,
+          reviewerFile: reviewerConfigFile,
+          reviewNow: fixedReviewNow,
+          reviewEntries: fixedReviewEntries,
+        });
       }
       return await serveStatic(req, res, localUrl, { allowFrame });
     } catch (error) {

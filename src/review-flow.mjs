@@ -4,7 +4,8 @@
 import { loadConfig } from './config.mjs';
 import { runtimePaths } from './paths.mjs';
 import { guardWrite } from './write-guard.mjs';
-import { reviewContent, reviewerFromEnv } from './reviewer.mjs';
+import { reviewContent } from './reviewer.mjs';
+import { resolveReviewerTransport } from './reviewer-config.mjs';
 import { createDraft } from './approvals.mjs';
 
 /**
@@ -18,6 +19,8 @@ export async function draftComment({
   now = new Date(),
   draftsDir,
   reviewTransport,
+  reviewerFile,
+  reviewerEnv,
   config: overrideConfig,
   allowlist,
   entries,
@@ -43,7 +46,10 @@ export async function draftComment({
     return { ok: false, errors: rule.reasons, rule, ai: null };
   }
 
-  const transport = reviewTransport === undefined ? reviewerFromEnv() : reviewTransport;
+  const transport =
+    reviewTransport === undefined
+      ? await resolveReviewerTransport({ file: reviewerFile, env: reviewerEnv })
+      : reviewTransport;
   const ai = await reviewContent(
     { content: rule.text, target: rule.target, actionType: 'comment' },
     { transport },

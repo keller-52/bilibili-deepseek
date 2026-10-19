@@ -159,22 +159,34 @@ DSH Agent 只有 `bili_draft_comment`（只写草稿），没有批准/发布工
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | GET | `/api/review/ready` | AI 审核器模式（`http` / `dry-run`） |
+| GET | `/api/review/config` | 当前审核器配置（key 只返回 `hasKey`，不回显） |
+| PUT | `/api/review/config` | `{ endpoint, model, apiKey? }`，保存到本机 |
+| DELETE | `/api/review/config` | 清除配置，回到 dry-run |
+| POST | `/api/review/test` | 用两条固定样例调用审核器 |
 | GET | `/api/review/queue?status=&limit=` | 待审队列，默认 `pending` |
 | POST | `/api/review/draft` | `{ bvid, content, note? }` → 规则 + AI + 草稿 |
 | POST | `/api/review/:id/approve` | 人工批准，返回一次性 token |
 | POST | `/api/review/:id/reject` | 拒绝 |
 | POST | `/api/comment/publish` | `{ draftId, token?, dryRun }`；默认 dry-run |
 
-AI 审核器默认 **dry-run**（没有配置时所有草稿转人工）。要接 OpenAI 兼容接口：
+AI 审核器默认 **dry-run**（没有配置时所有草稿转人工）。配置直接在控制台
+**「待审」→「AI 审核器」** 面板里填：
 
-```bash
-BILI_REVIEW_API_URL=https://api.deepseek.com/chat/completions
-BILI_REVIEW_API_KEY=...
-BILI_REVIEW_MODEL=deepseek-chat
-```
+![AI 审核器配置](docs/media/review-config.png)
 
-> 真实发布路径需要你在「待审」页批准后手动点；本次只验证到「输入预览 + 清空」，
-> 没有实际发出评论。首次真实发布建议先选一个自己可控的视频验收。
+| 字段 | 例子 |
+|---|---|
+| API 地址 | `https://api.deepseek.com/chat/completions` |
+| 模型 | `deepseek-chat` |
+| API Key | `sk-...` |
+
+点 **「保存并测试」** 会用「正常技术观察 / 明显广告」两条固定样例调用一次，
+显示 verdict / risk / 耗时。key 只写入本机 `config/reviewer.local.json`（gitignore），
+接口不会回显；留空保存会保留已有 key。环境变量
+`BILI_REVIEW_API_URL/KEY/MODEL` 仍可作为 headless / 无界面时的回退。
+
+> 真实评论发布已由账号持有人人工审核并验收（审计 `action=comment`、
+> `exec=ok`、`verify=visible`）。本次新增的是「在网页里配置并测试真实 AI 审核器」。
 
 ## 登录是怎么做的（不碰接口）
 
@@ -282,6 +294,7 @@ BILI_REVIEW_MODEL=deepseek-chat
 │   ├── guard.mjs                  # 导航限速、每小时上限、STOP 急停
 │   ├── write-guard.mjs            # 写操作规则引擎（白名单/长度/配额/时间窗口）
 │   ├── reviewer.mjs               # 独立 AI 审核器（固定提示词 + fail closed）
+│   ├── reviewer-config.mjs        # 控制台审核配置（本机 key / 环境变量回退）
 │   ├── approvals.mjs              # 待审草稿 + 5 分钟一次性 token
 │   ├── review-flow.mjs            # 草稿 → 规则 → AI → 队列
 │   ├── comment.mjs                # 评论输入预览 / 批准后发布 + 审计
@@ -301,7 +314,7 @@ BILI_REVIEW_MODEL=deepseek-chat
 ## 开发
 
 ```bash
-npm test          # 104 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、只读链路、限速、记忆、写操作规则、审核器、审批 token、HTTP、DSH 插件与工具
+npm test          # 114 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、只读链路、限速、记忆、写操作规则、审核器、审核配置、审批 token、HTTP、DSH 插件与工具
 node src/cli.mjs status
 node src/cli.mjs status --json
 node src/cli.mjs search "AI Agent" --limit 3
@@ -340,7 +353,7 @@ node src/cli.mjs video BV1xx... --comments 20
 - [x] **0.2 只读链路**：搜索 / 看视频 / 读 Shadow DOM 评论 / 写 memory；控制台 + CLI + HTTP + DSH 只读工具 + `bili-playbook` skill
 - [ ] **0.3 L1 + guard**：点赞 / 投币 / 收藏，配额、限速、审计
 - [ ] **0.4 L2 + 三层审核**：评论 / 回复 / 弹幕 / 私信
-  - 评论草稿 → 规则 → 独立 AI → 人工批准 → 输入预览已落地；真实发布待人工验收
+  - 评论草稿 → 规则 → 独立 AI → 人工批准 → 输入预览 / 真实发布已人工验收
 - [ ] **0.5 L3 与 AUTO**：动态日 1 + 人工；满足条件后再评估 AUTO
 
 ## 已知限制
@@ -351,8 +364,9 @@ node src/cli.mjs video BV1xx... --comments 20
 - 专用 Chrome 默认无头；遇到滑块 / 验证码时在登录页勾选「显示 Chrome 窗口」重试。
 - 只读链路针对 2026-10 的 B 站页面结构写选择器；搜索卡片或评论 Shadow DOM 改版会直接报错并截图，不会静默返回空。
 - 评论是懒加载的：一次最多读 50 条，且只读已经滚出来的部分；「楼中楼」只统计回复数，不展开。
-- AI 审核器默认 dry-run（没有配置时全部转人工）；要真实审核需要设置 `BILI_REVIEW_*` 环境变量。
-- 评论真实发布路径已实现，但本次只验证到「输入预览 + 清空」；第一次真实发布请自己选一个可控视频验收。
+- AI 审核器默认 dry-run（没有配置时全部转人工）；可在「待审」页配置，也可用 `BILI_REVIEW_*` 环境变量。
+- API key 以明文保存在本机 `config/reviewer.local.json`（gitignore）；建议用独立 key、设消费限额，不与其他服务共用。
+- 评论真实发布已由账号持有人人工审核验收；若页面改版/验证码导致失败，仍会停并截图。
 - 批准令牌 5 分钟有效且只存在页面内存中；刷新页面后令牌丢失，只能拒绝草稿重新来。
 - 本机同用户进程可以直接调用 API；审批是流程约束，不是 OS 沙箱。
 - DSH 工具只在 DSH 启动时注册；更新插件代码后必须重启 DSH。

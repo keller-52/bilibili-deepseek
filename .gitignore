@@ -12,6 +12,8 @@ runtime/duty.log
 runtime/guard-state.json
 runtime/*.tmp-*
 config/*.tmp-*
+config/reviewer.local.json
+config/reviewer.local.json.tmp-*
 .env
 .env.*
 .DS_Store
