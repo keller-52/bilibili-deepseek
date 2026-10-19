@@ -7,6 +7,7 @@ import { apply } from '../plugin/host.mjs';
 
 test('host half registers the /bili-duty prefix on webServer', async () => {
   let registered = null;
+  const tools = [];
   const ctx = {
     webServer: {
       register(options) {
@@ -14,16 +15,31 @@ test('host half registers the /bili-duty prefix on webServer', async () => {
         return () => {};
       },
     },
+    tools: {
+      register(definition) {
+        tools.push(definition);
+        return () => {};
+      },
+    },
     effect(fn) {
       return fn();
     },
-    logger: { info() {} },
+    logger: { info() {}, warn() {} },
   };
 
   apply(ctx);
   assert.equal(registered.kind, 'prefix');
   assert.equal(registered.path, '/bili-duty');
   assert.equal(typeof registered.handler, 'function');
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ['bili_status', 'bili_search', 'bili_read_video', 'bili_watched'],
+  );
+  for (const tool of tools) {
+    assert.equal(tool.parameters.type, 'object');
+    assert.equal(typeof tool.execute, 'function');
+    assert.equal(typeof tool.output.render, 'function');
+  }
 
   const server = http.createServer(registered.handler);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));

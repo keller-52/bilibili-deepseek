@@ -16,10 +16,12 @@ const state = {
   qrTimer: null,
   statusTimer: null,
   lastQrImage: '',
+  readReady: false,
 };
 
 const VIEW_META = {
   overview: { title: '概览', sub: '账号运行前的准备：登录、白名单、参数。' },
+  read: { title: '只读浏览', sub: '搜索、看视频、读评论；不点赞、不评论、不发送。' },
   login: { title: '登录', sub: '扫码登录，或读取专用 Chrome 里已有的登录态。' },
   allowlist: { title: '私信白名单', sub: '只有名单里的人能收到 AI 私信。' },
   params: { title: '参数', sub: '配额、调度、审核、风控。默认值刻意保守。' },
@@ -54,7 +56,10 @@ async function api(path, options = {}) {
   } catch {
     payload = { error: `HTTP ${response.status}` };
   }
-  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const detail = payload?.errors?.length ? payload.errors.join('；') : '';
+    throw new Error(payload?.error || detail || `HTTP ${response.status}`);
+  }
   return payload;
 }
 
@@ -87,6 +92,7 @@ function go(view) {
   if (view === 'audit') loadAudit();
   if (view === 'params') loadConfig();
   if (view === 'allowlist') loadAllowlist();
+  if (view === 'read') loadReadView();
 }
 
 function statusPills(chrome, login) {
@@ -143,6 +149,12 @@ function renderOverview(status) {
   $('#stat-audit').textContent = `${audit.total} 条`;
   $('#stat-audit-sub').textContent = audit.missing ? '还没有审计文件' : 'runtime/audit';
 
+  const memory = status.memory ?? { total: 0 };
+  $('#stat-watched').textContent = `${memory.total} 个`;
+  $('#stat-watched-sub').textContent = memory.last?.title
+    ? `最近：${memory.last.title.slice(0, 24)}`
+    : '只读浏览会写入这里';
+
   const warnings = [];
   for (const error of config.errors) warnings.push({ kind: 'bad', text: error });
   for (const warning of config.warnings) warnings.push({ kind: 'warn', text: warning });
@@ -161,6 +173,7 @@ function renderOverview(status) {
     ['白名单', paths.allowlist],
     ['Chrome Profile', paths.profile],
     ['运行数据', paths.runtime],
+    ['只读记忆', paths.memory ?? 'runtime/memory'],
     ['审计文件', paths.audit],
   ];
   $('#path-list').innerHTML = pathRows
@@ -596,6 +609,171 @@ async function loadAudit() {
   }
 }
 
+function renderReadResults(data) {
+  const tbody = $('#read-results tbody');
+  if (!data.items?.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">没有搜到视频。换个关键词，或稍后再试（B 站可能触发了限流）。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.items
+    .map((item) => {
+      const facts = [item.author, item.duration, item.play ? `${item.play} 播放` : '', item.pubdate]
+        .filter(Boolean)
+        .join(' · ');
+      return `<tr>
+        <td><b>${esc(item.title)}</b><div class="read-sub">${esc(item.bvid)}${item.danmaku ? ` · ${esc(item.danmaku)} 弹幕` : ''}</div></td>
+        <td class="muted">${esc(facts || '—')}</td>
+        <td><button class="ghost" data-read-bvid="${esc(item.bvid)}">读取</button></td>
+      </tr>`;
+    })
+    .join('');
+}
+
+function renderWatched(data) {
+  const tbody = $('#watched-table tbody');
+  if (!data.entries?.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">还没有记录。读一个视频，就会出现在这里。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.entries
+    .map((entry) => {
+      const read = entry.commentsRead ? `${entry.commentsRead} 条评论` : '只看信息';
+      return `<tr>
+        <td class="muted">${esc(formatTime(entry.ts))}</td>
+        <td><a href="${esc(entry.url)}" target="_blank" rel="noreferrer">${esc(entry.title || entry.bvid)}</a>
+          <div class="read-sub">${esc(entry.bvid)}${entry.author ? ` · ${esc(entry.author)}` : ''}</div></td>
+        <td class="muted">${esc(read)}${entry.note ? `<div class="read-sub">${esc(entry.note)}</div>` : ''}</td>
+      </tr>`;
+    })
+    .join('');
+}
+
+async function checkReadReady() {
+  try {
+    const ready = await api('read/ready');
+    state.readReady = true;
+    $('#read-restart-note').hidden = true;
+    const facts = [];
+    facts.push(ready.cdp ? 'Chrome 已连接' : 'Chrome 未启动');
+    facts.push(ready.loggedIn ? `已登录 UID ${ready.uid}` : '未登录');
+    if (ready.stop) facts.push('已触发 STOP 急停');
+    facts.push(`最近一小时导航 ${ready.navigationsLastHour ?? 0} 次`);
+    $('#read-search-hint').textContent = facts.join(' · ');
+    return ready;
+  } catch (error) {
+    state.readReady = false;
+    $('#read-restart-note').hidden = false;
+    $('#read-search-hint').textContent = `只读接口不可用：${error.message}`;
+    return null;
+  }
+}
+
+async function ensureReadReady() {
+  if (state.readReady) return true;
+  const ready = await checkReadReady();
+  return Boolean(ready);
+}
+
+async function loadWatchedView() {
+  try {
+    const data = await api('read/watched?limit=20');
+    renderWatched(data);
+  } catch (error) {
+    toast(`读取记忆失败：${error.message}`, 'bad');
+  }
+}
+
+async function loadReadView() {
+  await Promise.all([checkReadReady(), loadWatchedView()]);
+}
+
+async function searchRead(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!(await ensureReadReady())) {
+    toast('只读接口还不可用：先重启一次 DSH', 'bad');
+    return;
+  }
+  const data = new FormData(form);
+  const query = String(data.get('q') ?? '').trim();
+  const limit = String(data.get('limit') ?? '5');
+  if (!query) return;
+
+  const button = form.querySelector('button[type="submit"]');
+  setBusy(button, true, '搜索中…');
+  $('#read-search-hint').textContent = '正在打开搜索页；导航限速可能要等 20–40 秒…';
+  try {
+    const result = await api(`read/search?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`);
+    renderReadResults(result);
+    $('#read-search-hint').textContent = `「${result.query}」找到 ${result.items.length} 个视频 · ${Math.round(result.tookMs / 1000)} 秒`;
+  } catch (error) {
+    toast(`搜索失败：${error.message}`, 'bad');
+    $('#read-search-hint').textContent = error.message;
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+function renderReadDetail(data) {
+  const video = data.video ?? {};
+  $('#read-detail').hidden = false;
+  $('#read-detail-title').textContent = video.title || data.bvid;
+  const facts = [
+    data.bvid,
+    video.author ? `UP ${video.author}` : '',
+    video.view ? `播放 ${video.view}` : '',
+    video.like ? `点赞 ${video.like}` : '',
+    data.commentsTotal ? `评论 ${data.commentsTotal}` : '',
+    data.sort === 'time' ? '按最新' : '按最热',
+  ].filter(Boolean);
+  $('#read-detail-meta').textContent = facts.join(' · ');
+  $('#read-detail-desc').textContent = video.desc || '';
+  $('#read-detail-memory').textContent = data.memory
+    ? `已写入记忆：${data.memory.watched}${data.memory.note ? ` · ${data.memory.note}` : ''}`
+    : '这次读取没有写入记忆。';
+
+  const tbody = $('#read-comments tbody');
+  if (!data.comments?.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">没有读到评论。可能是评论区关闭、未登录或页面结构变了。</td></tr>';
+  } else {
+    tbody.innerHTML = data.comments
+      .map((comment) => {
+        const meta = [comment.author || '匿名', comment.pubdate].filter(Boolean).join(' · ');
+        const replies = comment.replies ? ` · ${comment.replies} 条回复` : '';
+        return `<tr>
+          <td class="muted">${esc(meta)}${esc(replies)}</td>
+          <td class="read-comment">${esc(comment.text)}</td>
+          <td class="muted">${Number(comment.likes) || 0}</td>
+        </tr>`;
+      })
+      .join('');
+  }
+  $('#read-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function readVideoFromUi(bvid) {
+  if (!(await ensureReadReady())) {
+    toast('只读接口还不可用：先重启一次 DSH', 'bad');
+    return;
+  }
+  $('#read-detail').hidden = false;
+  $('#read-detail-title').textContent = '读取中…';
+  $('#read-detail-meta').textContent = '正在打开视频页；导航限速可能要等 20–40 秒…';
+  $('#read-detail-desc').textContent = '';
+  $('#read-detail-memory').textContent = '';
+  $('#read-comments tbody').innerHTML = '<tr><td colspan="3" class="empty">读取中…</td></tr>';
+  try {
+    const data = await api(`read/video?bvid=${encodeURIComponent(bvid)}&comments=20`);
+    renderReadDetail(data);
+    await Promise.all([loadStatus(), loadWatchedView()]);
+    toast('已读取并写入记忆', 'ok');
+  } catch (error) {
+    $('#read-detail-meta').textContent = error.message;
+    toast(`读取失败：${error.message}`, 'bad');
+    await loadWatchedView();
+  }
+}
+
 async function loadStatus() {
   try {
     const status = await api('status');
@@ -623,6 +801,8 @@ function bindEvents() {
     if (del) deleteAllow(del.dataset.deleteUid);
     const owner = event.target.closest('[data-owner-uid]');
     if (owner) setOwner(owner.dataset.ownerUid);
+    const read = event.target.closest('[data-read-bvid]');
+    if (read) readVideoFromUi(read.dataset.readBvid);
   });
 
   $('#btn-qr').addEventListener('click', startQr);
@@ -633,6 +813,11 @@ function bindEvents() {
   $('#btn-dm').addEventListener('click', sendOwnerDmFromUi);
   $('#btn-save-params').addEventListener('click', saveParams);
   $('#btn-audit-refresh').addEventListener('click', loadAudit);
+  $('#read-search-form').addEventListener('submit', searchRead);
+  $('#btn-read-close').addEventListener('click', () => {
+    $('#read-detail').hidden = true;
+  });
+  $('#btn-watched-refresh').addEventListener('click', loadWatchedView);
 }
 
 async function boot() {

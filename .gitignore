@@ -9,6 +9,8 @@ runtime/*.png
 runtime/*.mjs
 runtime/*.log
 runtime/duty.log
+runtime/guard-state.json
+runtime/*.tmp-*
 config/*.tmp-*
 .env
 .env.*

@@ -252,7 +252,7 @@ code {
 }
 
 .grid.stats {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
 }
 
 .grid.two {
@@ -546,6 +546,44 @@ tbody tr:hover {
   gap: 12px;
   align-items: flex-end;
   margin-top: 12px;
+}
+
+.inline-form label.grow {
+  flex: 1;
+}
+
+.inline-form label.grow input {
+  width: 100%;
+}
+
+.inline-form select {
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--text);
+  outline: none;
+  font: inherit;
+}
+
+.inline-form select:focus {
+  border-color: var(--pink);
+}
+
+.read-sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.read-comment {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+a {
+  color: var(--blue);
 }
 
 .inline-form label,
@@ -930,17 +968,42 @@ textarea:focus {
 }
 
 /* Embedded inside the DSH settings page: the host already provides the frame. */
-html.embed .sidebar {
-  display: none;
-}
-
 html.embed .app {
   grid-template-columns: 1fr;
   min-height: 0;
 }
 
+html.embed .sidebar {
+  position: static;
+  height: auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 0 2px 12px;
+  border-right: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+}
+
+html.embed .brand,
+html.embed .side-foot {
+  display: none;
+}
+
+html.embed .nav {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+html.embed .nav button {
+  width: auto;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
 html.embed .main {
-  padding: 18px 20px 40px;
+  padding: 14px 4px 40px;
 }
 
 html.embed .topbar {

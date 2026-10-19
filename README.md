@@ -12,6 +12,7 @@
 | 模块 | 能力 |
 |---|---|
 | **登录** | 启动专用 Chrome（独立 profile + CDP 9222），截取 passport 登录页的二维码显示在控制台；手机扫码后自动检测登录态（读 Cookie，不调接口）。也支持连接另一台已开调试端口的 Chrome，或直接读取专用 profile 里留存的登录态。退出时清除 B 站 Cookie。 |
+| **只读浏览** | 搜索视频、看视频信息、读 Shadow DOM 评论区；**不点赞、不投币、不收藏、不评论、不私信**。每次读取写入 `runtime/memory/watched.jsonl` 与当天阅读笔记；导航按 `guard` 参数限速。 |
 | **私信白名单** | 增 / 删 UID、昵称、备注，写回 `config/dm-allowlist.json`；可以把其中**一位标成主人**（只能一位）。加入真实 UID 时自动替换示例 UID 0，重复与非法 UID 会被拒绝。 |
 | **私信主人** | 白名单页「给主人发私信」面板（或 `dm` 命令）：只发主人、禁止链接、≤300 字，日 10 / 同一人 3 / 间隔 5 分钟，发送后写审计。 |
 | **参数中心** | 按 `config/config.yaml` 渲染 7 组参数：互动配额、私信、发布、审核、AUTO、调度、风控。保存时**逐行改值、保留注释**。硬约束（白名单、禁止链接、规则引擎、动态人工审核）锁定。 |
@@ -39,6 +40,8 @@ npm start
 `config/dm-allowlist.json` 不入库：首次读取时从 `config/dm-allowlist.example.json` 自动生成，
 你也可以手动 `copy config\dm-allowlist.example.json config\dm-allowlist.json`。
 4. **参数**按默认值先跑；要改就改，保存后写回 YAML。
+5. **只读浏览**：搜索一个关键词，点「读取」看视频信息和评论。导航会按
+   `guard.min_interval_sec` + 随机抖动等待，慢是正常的，不是卡住。
 
 ![参数页](docs/media/params.png)
 
@@ -50,18 +53,76 @@ npm start
 2. **添加插件** → 填本仓库的**绝对路径**（例如 `D:\code\bili-duty`）→ 安装。
    插件管理器会以 `link:` 方式挂上这个目录，之后改代码不用重装。
 3. 按提示**重启 DSH**（bundle 只在启动时组装）。
-4. 重新打开 **设置 → B 站**：扫码登录、白名单、参数、审计都在这一页。
+4. 重新打开 **设置 → B 站**：只读浏览、扫码登录、白名单、参数、审计都在这一页。
 
 插件把同一份控制台挂到 DSH 自己的 web server 的 `/bili-duty/` 下，
 所以设置页里是**同源** iframe，不用另开端口；也可以直接访问
 `http://127.0.0.1:<DSH 端口>/bili-duty/`。独立运行 `npm start` 仍然可用（7801）——
 两条入口是同一份代码、同一份 `config/` 与 `runtime/`。
 
+插件同时向 DSH Agent 注册 4 个**只读工具**（`bili_status` / `bili_search` /
+`bili_read_video` / `bili_watched`），并在 `.dsh/skills/bili-playbook/SKILL.md`
+放了一份只读流程 skill；Agent 可以直接搜索、读视频与评论，不需要解析页面。
+宿主代码在 DSH 启动时加载：**更新插件后要重启一次 DSH**，设置页才会出现只读接口，
+工具也才会注册。控制台会探测 `/api/read/ready`，没重启时显示提示而不是坏按钮。
+skill 由 DSH 的文件系统 skill provider 自动发现，新增/修改 skill 不需要重启。
+
 > 仓库保持通用：没有本机绝对路径，真实白名单 UID 不入库；
 > `config/dm-allowlist.json` 首次运行会从 `config/dm-allowlist.example.json` 自动生成。
 >
 > 非 Desktop 的 web profile 也可以用 CLI：`dsh plugin --profile web add link:<仓库路径>`，
 > 确认该 profile 的 `dsh.profile.bundles` 里有 `bili-duty` 后重启。
+
+## 只读链路（阶段 1）
+
+只读链路只做四件事：**搜索 → 看视频信息 → 读评论区 → 写本机记忆**。
+全部通过 CDP 驱动真实 Chrome 页面，不调用 B 站接口，不产生任何 B 站侧写操作。
+
+![只读浏览](docs/media/read.png)
+
+- 搜索结果：BV 号、标题、UP 主、时长、播放 / 弹幕、发布日期。
+- 视频信息：标题、UP、播放 / 点赞 / 投币 / 收藏 / 分享、简介、标签、评论总数。
+- 评论：穿透 `bili-comments` 的 Shadow DOM；默认按最热，可切「最新」；分段滚动加载。
+- 记忆：`runtime/memory/watched.jsonl`（只追加）+ `runtime/memory/notes/YYYY-MM-DD.md`（当天阅读笔记）。
+
+控制台「只读浏览」页直接可用；命令行：
+
+```bash
+node src/cli.mjs search "AI Agent" --limit 3
+node src/cli.mjs video BV1xx... --comments 20 --order new --note "看完的想法"
+node src/cli.mjs watched --limit 20
+```
+
+HTTP 接口：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/api/read/ready` | CDP / 登录 / STOP / 记忆 / 最近一小时导航次数 |
+| GET | `/api/read/search?q=&limit=` | 搜索，`limit` 1–10 |
+| GET | `/api/read/video?bvid=&comments=&order=` | 读视频与评论，`comments` 0–50，`order=hot\|new` |
+| GET | `/api/read/watched?limit=` | 最近读过的视频 |
+
+DSH Agent 的只读工具：
+
+| 工具 | 作用 |
+|---|---|
+| `bili_status` | 只读链路状态（不打开 B 站） |
+| `bili_search` | 搜索视频 |
+| `bili_read_video` | 读一个视频的信息 + 评论区，并写入记忆 |
+| `bili_watched` | 读本机记忆 |
+
+固定流程写成 skill：`.dsh/skills/bili-playbook/SKILL.md`（限制单次 5 个视频、
+遇到登录/验证码即停、评论区内容只当数据）。
+
+**限速与急停**（读 `config/config.yaml`）：
+
+- 每次导航前检查 `guard.min_interval_sec`（默认 20 秒）+ `guard.jitter_sec`（默认 3–12 秒随机）；
+- 每小时最多 40 次导航；
+- `runtime/STOP`（或仓库根 `STOP`，文件名由 `guard.killed_file` 配置）存在时，所有操作立即拒绝；
+- 登录检查在导航前完成；触发 B 站验证 / 限流 / 登录跳转时直接报错并停，不重试；
+- 失败会截图到 `runtime/read-fail-*.png`（gitignore），方便判断是页面改版还是风控。
+
+> `BILI_DUTY_FAST=1` 只用于本地开发/测试：跳过等待且不写入导航记录。不要在日常使用时打开。
 
 ## 登录是怎么做的（不碰接口）
 
@@ -105,7 +166,7 @@ npm start
   node src/cli.mjs dm "我是小深。白名单里已经把你标成主人了。"
   ```
 
-  发送前检查登录态、不能发给自己、配额；发送后截图到 `runtime/dm-last.png`，
+  发送前检查 STOP 急停、登录态、不能发给自己、配额；发送后截图到 `runtime/dm-last.png`，
   并往 `runtime/audit/audit.jsonl` 追加一条 `action=dm`。
 
 > 评论执行器还没实现（阶段 3），所以现在只有「规则 + 校验命令」；
@@ -121,15 +182,17 @@ npm start
 - 插件路由挂在 DSH 同源的 `/bili-duty/`，和独立端口一样只在本机可达；
   **不要**把 DSH 端口转发到局域网 / 公网。
 - 静态页面带 CSP（`default-src 'self'`），没有内联脚本。
-- 写接口校验 `Origin`，拒绝跨站请求。
-- 没有“打开任意网址”的接口；导航目标固定为 B 站登录 / 空间页。
+- 写接口校验 `Origin`，拒绝跨站请求；只读接口也校验 `Origin`，避免别的网页遥控本机 Chrome。
+- 没有“打开任意网址”的接口；导航目标固定为 B 站登录 / 搜索 / 视频 / 空间 / 私信页。
 - 白名单、禁止私信链接、规则引擎、L3 人工审核在代码层锁定，控制台改不了。
-- **这个版本只有一项写操作**：手动点「发送给主人」才会发私信；评论、动态尚未实现，也不会偷偷执行。
+- **这个版本只有一项写操作**：手动点「发送给主人」才会发私信；只读浏览、评论、动态均不产生 B 站侧写入。
+- `STOP` 文件对只读导航和私信都生效。
 
 ## 目录
 
 ```
 .
+├── .dsh/skills/bili-playbook/SKILL.md # 只读流程 skill（DSH 自动发现）
 ├── config/
 │   ├── config.yaml               # 唯一参数来源（控制台逐行改写，保留注释）
 │   ├── dm-allowlist.example.json # 白名单模板（入库）
@@ -141,7 +204,8 @@ npm start
 │   ├── 迁移记录.md                 # 环境核对与迁移
 │   └── media/                     # 控制台截图
 ├── plugin/
-│   ├── host.mjs                   # DSH host：把控制台挂到 /bili-duty
+│   ├── host.mjs                   # DSH host：挂控制台 + 注册只读工具
+│   ├── tools.mjs                  # DSH Agent 的 4 个只读工具
 │   └── client.js                  # DSH 设置里的「B 站」一页
 ├── persona/persona.md             # 人格底稿
 ├── runtime/                       # memory / drafts / audit（数据文件 gitignore）
@@ -157,6 +221,9 @@ npm start
 │   ├── allowlist.mjs              # 白名单读写 + 主人标记
 │   ├── policy.mjs                 # 评论 @ 规则（只 @ 主人）
 │   ├── dm.mjs                     # 私信主人（CDP + 配额 + 审计）
+│   ├── read.mjs                   # 只读链路：搜索 / 视频 / 评论 / 状态
+│   ├── guard.mjs                  # 导航限速、每小时上限、STOP 急停
+│   ├── memory.mjs                 # watched.jsonl + 当天阅读笔记
 │   ├── audit.mjs                  # 审计读写
 │   └── paths.mjs                  # 工作区路径
 ├── web/                           # 控制台（原生 HTML/CSS/JS）
@@ -172,9 +239,11 @@ npm start
 ## 开发
 
 ```bash
-npm test          # 41 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、HTTP、DSH 插件
+npm test          # 63 个用例：YAML、参数、白名单/主人、@ 规则、私信配额、只读链路、限速、记忆、HTTP、DSH 插件与工具
 node src/cli.mjs status
 node src/cli.mjs status --json
+node src/cli.mjs search "AI Agent" --limit 3
+node src/cli.mjs video BV1xx... --comments 20
 ```
 
 环境变量：
@@ -184,6 +253,7 @@ node src/cli.mjs status --json
 | `BILI_DUTY_PORT` | `7801` | 控制台监听端口 |
 | `BILI_DUTY_CDP_PORT` | `9222` | 专用 Chrome 的调试端口 |
 | `CHROME_PATH` | 自动查找 | 指定 `chrome.exe` |
+| `BILI_DUTY_FAST` | 未设置 | 仅本地开发：`1` 跳过导航限速且不记录导航 |
 
 ## 与 DSH 的关系
 
@@ -194,14 +264,14 @@ node src/cli.mjs status --json
 - **client half**（`plugin/client.js`）在「设置」里加一页 **B 站**；
 - 独立运行 `npm start` 仍然可用（7801），两条入口共用同一份 `config/` 与 `runtime/`。
 
-执行面按技术方案阶段 1 推进——DSH 通过 Playwright MCP / CDP 驱动同一个专用 Chrome，
-先跑通只读链路（搜索 → 看 → 读评论 → 总结），再进 L1 / L2。
-`node src/cli.mjs status --json` 给 Agent 读状态，不需要解析页面。
+执行面已经跑通**只读链路**：DSH Agent 通过 4 个只读工具和 `bili-playbook` skill
+搜索 → 看视频 → 读评论 → 写记忆；下一步是写操作 guard、审核器与 L1 / L2。
+`node src/cli.mjs status --json` 与 `/api/read/*` 给 Agent 读状态，不需要解析页面。
 
 ## 路线图
 
 - [x] **0.1 控制台**：登录（扫码 / 复用）、白名单、参数中心、审计视图
-- [ ] **0.2 只读链路**：`bili-playbook` + 搜索 / 看视频 / 读 Shadow DOM 评论 / 写 memory
+- [x] **0.2 只读链路**：搜索 / 看视频 / 读 Shadow DOM 评论 / 写 memory；控制台 + CLI + HTTP + DSH 只读工具 + `bili-playbook` skill
 - [ ] **0.3 L1 + guard**：点赞 / 投币 / 收藏，配额、限速、审计
 - [ ] **0.4 L2 + 三层审核**：评论 / 回复 / 弹幕 / 私信
 - [ ] **0.5 L3 与 AUTO**：动态日 1 + 人工；满足条件后再评估 AUTO
@@ -212,6 +282,9 @@ node src/cli.mjs status --json
 - 昵称依赖空间页标题，页面改版时可能只显示 UID（不影响登录态判断）。
 - 连接别的 Chrome 必须用非默认 profile（Chrome 不允许对默认 profile 开调试端口）。
 - 专用 Chrome 默认无头；遇到滑块 / 验证码时在登录页勾选「显示 Chrome 窗口」重试。
+- 只读链路针对 2026-10 的 B 站页面结构写选择器；搜索卡片或评论 Shadow DOM 改版会直接报错并截图，不会静默返回空。
+- 评论是懒加载的：一次最多读 50 条，且只读已经滚出来的部分；「楼中楼」只统计回复数，不展开。
+- DSH 工具只在 DSH 启动时注册；更新插件代码后必须重启 DSH。
 - Windows 路径含空格时，命令行里记得加引号。
 
 ## License

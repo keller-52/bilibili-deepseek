@@ -3,9 +3,38 @@ import { buildStatus } from './server.mjs';
 import { getOwner, loadAllowlist } from './allowlist.mjs';
 import { ensureOwnerMention } from './policy.mjs';
 import { sendOwnerDm } from './dm.mjs';
+import { readVideo, searchVideos } from './read.mjs';
+import { readWatched } from './memory.mjs';
+import { runtimePaths } from './paths.mjs';
+import { loadConfig } from './config.mjs';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? 'status';
+
+function takeFlag(list, name) {
+  const index = list.indexOf(name);
+  if (index === -1) return null;
+  return list.splice(index, 2)[1] ?? null;
+}
+
+function hasFlag(list, name) {
+  const index = list.indexOf(name);
+  if (index === -1) return false;
+  list.splice(index, 1);
+  return true;
+}
+
+function printUsage() {
+  console.log(`bili-duty CLI
+
+  node src/cli.mjs status [--json]
+  node src/cli.mjs search "关键词" [--limit 5] [--json]
+  node src/cli.mjs video BV1xx... [--comments 20] [--order hot|new] [--note "笔记"] [--json]
+  node src/cli.mjs watched [--limit 20] [--json]
+  node src/cli.mjs comment-check "评论草稿"
+  node src/cli.mjs dm [--dry-run] [--port 9222] "私信内容"
+`);
+}
 
 async function printStatus(asJson) {
   const status = await buildStatus();
@@ -75,6 +104,86 @@ if (command === 'dm') {
       process.exitCode = 1;
     }
   }
+} else if (command === 'search') {
+  const rest = args.slice(1);
+  const asJson = hasFlag(rest, '--json');
+  const limit = takeFlag(rest, '--limit') ?? 5;
+  const query = rest.join(' ').trim();
+  if (!query) {
+    console.error('用法：node src/cli.mjs search "关键词" [--limit 5] [--json]');
+    process.exitCode = 1;
+  } else {
+    const result = await searchVideos(query, { limit: Number(limit) });
+    if (asJson) {
+      console.log(JSON.stringify(result, null, 2));
+      process.exitCode = result.ok ? 0 : 1;
+    } else if (!result.ok) {
+      console.error(`搜索失败：${(result.errors ?? []).join('；')}`);
+      process.exitCode = 1;
+    } else {
+      console.log(`「${result.query}」· ${result.items.length} 个视频 · ${Math.round(result.tookMs / 1000)}s`);
+      result.items.forEach((item, index) => {
+        const facts = [item.author, item.duration, `${item.play || '—'} 播放`].filter(Boolean).join(' · ');
+        console.log(`${index + 1}. ${item.title}`);
+        console.log(`   ${item.bvid} · ${facts}`);
+      });
+    }
+  }
+} else if (command === 'video') {
+  const rest = args.slice(1);
+  const asJson = hasFlag(rest, '--json');
+  const comments = takeFlag(rest, '--comments') ?? 20;
+  const order = takeFlag(rest, '--order') ?? 'hot';
+  const note = takeFlag(rest, '--note') ?? '';
+  const target = rest.join(' ').trim();
+  if (!target) {
+    console.error('用法：node src/cli.mjs video BV1xx... [--comments 20] [--order hot|new] [--note "笔记"] [--json]');
+    process.exitCode = 1;
+  } else {
+    const result = await readVideo(target, { comments: Number(comments), order, note });
+    if (asJson) {
+      console.log(JSON.stringify(result, null, 2));
+      process.exitCode = result.ok ? 0 : 1;
+    } else if (!result.ok) {
+      console.error(`读取失败：${(result.errors ?? []).join('；')}`);
+      if (result.screenshot) console.error(`截图：${result.screenshot}`);
+      process.exitCode = 1;
+    } else {
+      const video = result.video;
+      console.log(`${video.title}`);
+      console.log(`UP：${video.author || '—'}${video.authorUid ? `（UID ${video.authorUid}）` : ''}`);
+      console.log(`BV：${result.bvid} · 播放 ${video.view || '—'} · 点赞 ${video.like || '—'} · 评论 ${result.commentsTotal || '—'}`);
+      console.log(`评论区：已读 ${result.comments.length} 条（${result.sort === 'time' ? '最新' : '最热'}）`);
+      result.comments.forEach((comment, index) => {
+        const meta = [comment.author || '匿名', comment.pubdate, comment.likes ? `${comment.likes} 赞` : ''].filter(Boolean).join(' · ');
+        console.log(`\n${index + 1}. ${meta}`);
+        console.log(comment.text);
+      });
+      if (result.memory) {
+        console.log(`\n记忆：${result.memory.watched}`);
+        console.log(`日记：${result.memory.note}`);
+      }
+    }
+  }
+} else if (command === 'watched') {
+  const rest = args.slice(1);
+  const asJson = hasFlag(rest, '--json');
+  const limit = takeFlag(rest, '--limit') ?? 20;
+  const config = await loadConfig();
+  const paths = runtimePaths(config.data);
+  const data = await readWatched(paths.memory, Number(limit));
+  if (asJson) {
+    console.log(JSON.stringify(data, null, 2));
+  } else {
+    console.log(`看过 ${data.total} 个视频 · ${data.file}`);
+    if (data.missing) console.log('（还没有记录）');
+    for (const entry of data.entries) {
+      console.log(`- ${entry.ts}  ${entry.title}  ${entry.bvid}`);
+      if (entry.commentsRead) console.log(`  ${entry.commentsRead} 条评论${entry.note ? ` · ${entry.note}` : ''}`);
+    }
+  }
+} else if (command === 'help' || command === '--help' || command === '-h') {
+  printUsage();
 } else {
   await printStatus(args.includes('--json'));
 }

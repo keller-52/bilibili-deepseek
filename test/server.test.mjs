@@ -43,6 +43,52 @@ test('config endpoint exposes groups and data', async () => {
   });
 });
 
+test('status exposes the read-only memory summary', async () => {
+  await withServer(async (port) => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/status`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(typeof body.memory.total, 'number');
+    assert.match(body.paths.memory, /runtime[\\/]memory$/);
+  });
+});
+
+test('read-only endpoints validate input before touching the browser', async () => {
+  await withServer(async (port) => {
+    const empty = await fetch(`http://127.0.0.1:${port}/api/read/search?q=`);
+    assert.equal(empty.status, 400);
+    const emptyBody = await empty.json();
+    assert.equal(emptyBody.ok, false);
+    assert.match(emptyBody.errors[0], /关键词/);
+
+    const badBvid = await fetch(`http://127.0.0.1:${port}/api/read/video?bvid=av170001`);
+    assert.equal(badBvid.status, 400);
+    const badBody = await badBvid.json();
+    assert.match(badBody.errors[0], /BV/);
+
+    const watched = await fetch(`http://127.0.0.1:${port}/api/read/watched?limit=5`);
+    assert.equal(watched.status, 200);
+    const watchedBody = await watched.json();
+    assert.ok(Array.isArray(watchedBody.entries));
+    assert.match(watchedBody.file, /watched\.jsonl$/);
+
+    const ready = await fetch(`http://127.0.0.1:${port}/api/read/ready`);
+    assert.equal(ready.status, 200);
+    const readyBody = await ready.json();
+    assert.equal(readyBody.ok, true);
+    assert.equal(typeof readyBody.memory.total, 'number');
+  });
+});
+
+test('cross-origin read-only requests are refused', async () => {
+  await withServer(async (port) => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/read/watched`, {
+      headers: { Origin: 'https://evil.example' },
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
 test('unknown API returns 404 JSON', async () => {
   await withServer(async (port) => {
     const response = await fetch(`http://127.0.0.1:${port}/api/nope`);

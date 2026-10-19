@@ -19,6 +19,7 @@
         </div>
         <nav class="nav" id="nav">
           <button class="active" data-view="overview"><span>概览</span></button>
+          <button data-view="read"><span>只读浏览</span></button>
           <button data-view="login"><span>登录</span></button>
           <button data-view="allowlist"><span>私信白名单</span></button>
           <button data-view="params"><span>参数</span></button>
@@ -64,6 +65,11 @@
               <strong id="stat-audit">0 条</strong>
               <small id="stat-audit-sub">runtime/audit</small>
             </article>
+            <article class="card stat">
+              <span class="stat-label">只读记忆</span>
+              <strong id="stat-watched">0 个</strong>
+              <small id="stat-watched-sub">runtime/memory</small>
+            </article>
           </div>
 
           <div class="panel" id="warnings-panel" hidden>
@@ -97,6 +103,68 @@
               <button class="link" data-goto="audit">查看全部</button>
             </div>
             <div class="table-wrap"><table id="mini-audit"></table></div>
+          </div>
+        </section>
+
+        <section class="view hidden" id="view-read">
+          <div class="panel">
+            <h2>只读浏览</h2>
+            <p class="muted">
+              通过真实 Chrome 搜索、看视频、读评论区。这里<b>不会</b>点赞、投币、收藏、评论或私信；
+              每次读取会写入 <code>runtime/memory/watched.jsonl</code> 和当天的笔记。
+            </p>
+            <p class="hint" id="read-restart-note" hidden>
+              只读接口需要重启一次 DSH 才会出现：插件宿主代码在 DSH 启动时加载。
+            </p>
+            <form id="read-search-form" class="inline-form" autocomplete="off">
+              <label class="grow">关键词
+                <input name="q" maxlength="50" required placeholder="例如 AI Agent、独立开发、开源工具" />
+              </label>
+              <label>返回条数
+                <select name="limit">
+                  <option value="3">3</option>
+                  <option value="5" selected>5</option>
+                  <option value="10">10</option>
+                </select>
+              </label>
+              <button class="primary" type="submit">搜索</button>
+            </form>
+            <p class="hint" id="read-search-hint">每次导航会按风控间隔等待，慢是正常的；停止时先创建 STOP 文件。</p>
+            <div class="table-wrap">
+              <table id="read-results">
+                <thead><tr><th>视频</th><th>UP / 数据</th><th></th></tr></thead>
+                <tbody><tr><td colspan="3" class="empty">还没有搜索。关键词只在本地使用，不会写进仓库。</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel" id="read-detail" hidden>
+            <div class="panel-head">
+              <h2 id="read-detail-title">视频</h2>
+              <button class="ghost" id="btn-read-close">关闭</button>
+            </div>
+            <p class="muted" id="read-detail-meta">—</p>
+            <p class="muted" id="read-detail-desc"></p>
+            <p class="hint" id="read-detail-memory"></p>
+            <div class="table-wrap">
+              <table id="read-comments">
+                <thead><tr><th>作者 / 时间</th><th>评论</th><th>赞</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>最近读过</h2>
+              <button class="ghost" id="btn-watched-refresh">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table id="watched-table">
+                <thead><tr><th>时间</th><th>视频</th><th>读取</th></tr></thead>
+                <tbody><tr><td colspan="3" class="empty">还没有记录。</td></tr></tbody>
+              </table>
+            </div>
           </div>
         </section>
 

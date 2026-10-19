@@ -7,6 +7,7 @@ import { getOwner, loadAllowlist } from './allowlist.mjs';
 import { loadConfig } from './config.mjs';
 import { appendAudit, tailAudit } from './audit.mjs';
 import { runtimePaths } from './paths.mjs';
+import { findStopFile } from './guard.mjs';
 
 const LINK_PATTERN = /(https?:\/\/|www\.|b23\.tv|bili2233\.cn|\.com\/|\.cn\/)/i;
 const MAX_LENGTH = 300;
@@ -125,6 +126,8 @@ export async function sendOwnerDm(text, { port = 9222, dryRun = false } = {}) {
 
   const config = await loadConfig();
   const paths = runtimePaths(config.data);
+  const stop = await findStopFile(config.data, { home: paths.home });
+  if (stop) return { ok: false, errors: [`急停：检测到 ${stop}，所有 B 站操作都不会执行`], owner };
   const previous = await tailAudit(paths.audit, 200);
   const quota = checkDmQuota(config.data, previous.entries, Number(owner.uid));
   if (!quota.ok) return { ok: false, errors: quota.errors, owner };

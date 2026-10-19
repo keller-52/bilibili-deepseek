@@ -1,6 +1,6 @@
 {
   "name": "bili-duty",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "B 站 AI 账号的本地控制台：扫码登录、登录态、私信白名单、参数与审计（UI 路线，不碰接口）",
   "type": "module",
   "main": "plugin/host.mjs",

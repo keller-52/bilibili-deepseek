@@ -20,6 +20,8 @@ import { findChrome, fetchCdpVersion, isCdpUp, launchChrome } from './chrome.mjs
 import { attachPage, connectCdp, sleep, waitFor } from './cdp.mjs';
 import { captureQr, clearLogin, fetchNickname, openLoginPage, readLoginState } from './bili.mjs';
 import { sendOwnerDm } from './dm.mjs';
+import { readStatus, readVideo, searchVideos } from './read.mjs';
+import { readWatched } from './memory.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -138,6 +140,12 @@ export async function buildStatus() {
 
   const paths = runtimePaths(config.data);
   const audit = await tailAudit(paths.audit, 5).catch(() => ({ entries: [], total: 0, invalid: 0 }));
+  const watched = await readWatched(paths.memory, 1).catch(() => ({
+    entries: [],
+    total: 0,
+    missing: true,
+    file: path.join(paths.memory, 'watched.jsonl'),
+  }));
   const chrome = await chromeInfo();
   const login = await quickLogin().catch(() => ({ cdp: chrome.cdp, loggedIn: false }));
 
@@ -155,6 +163,12 @@ export async function buildStatus() {
       })(),
     },
     audit: { total: audit.total, invalid: audit.invalid, recent: audit.entries, missing: Boolean(audit.missing) },
+    memory: {
+      total: watched.total,
+      missing: Boolean(watched.missing),
+      file: watched.file,
+      last: watched.entries?.[0] ?? null,
+    },
     config: { errors: config.errors, warnings: config.warnings, path: CONFIG_FILE },
     paths: {
       root: ROOT,
@@ -163,6 +177,7 @@ export async function buildStatus() {
       profile: CHROME_PROFILE,
       runtime: paths.home,
       audit: paths.audit,
+      memory: paths.memory,
     },
   };
 }
@@ -355,6 +370,44 @@ async function handleApi(req, res, url) {
     const body = await readJsonBody(req);
     const result = await sendOwnerDm(body.content, { port: state.port });
     return sendJson(res, result.ok ? 200 : 400, result);
+  }
+
+  if (req.method === 'GET' && pathname.startsWith('/api/read/')) {
+    // Read-only still opens a real page; never let another origin drive it.
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: '拒绝跨站请求' });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/read/ready') {
+    return sendJson(res, 200, await readStatus({ port: state.port }));
+  }
+
+  if (req.method === 'GET' && pathname === '/api/read/search') {
+    const query = url.searchParams.get('q') ?? url.searchParams.get('query') ?? '';
+    const limit = url.searchParams.get('limit');
+    const result = await searchVideos(query, {
+      limit: limit == null ? undefined : Number(limit),
+      port: state.port,
+    });
+    return sendJson(res, result.ok ? 200 : 400, result);
+  }
+
+  if (req.method === 'GET' && pathname === '/api/read/video') {
+    const bvid = url.searchParams.get('bvid') ?? url.searchParams.get('url') ?? url.searchParams.get('id') ?? '';
+    const comments = url.searchParams.get('comments');
+    const order = url.searchParams.get('order') ?? 'hot';
+    const result = await readVideo(bvid, {
+      comments: comments == null ? undefined : Number(comments),
+      order,
+      port: state.port,
+    });
+    return sendJson(res, result.ok ? 200 : 400, result);
+  }
+
+  if (req.method === 'GET' && pathname === '/api/read/watched') {
+    const config = await loadConfig();
+    const paths = runtimePaths(config.data);
+    const limit = url.searchParams.get('limit');
+    return sendJson(res, 200, await readWatched(paths.memory, limit == null ? 20 : Number(limit)));
   }
 
   if (req.method === 'GET' && pathname === '/api/audit') {
