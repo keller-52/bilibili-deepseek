@@ -193,7 +193,7 @@ export async function sendOwnerDm(text, { port = 9222, dryRun = false } = {}) {
       content: checked.content,
       rule: 'pass',
       ai: 'skip-owner',
-      human: 'manual-cli',
+      human: 'manual',
       exec: cleared ? 'ok' : 'unknown',
       verify: cleared ? 'visible' : 'unknown',
     });
@@ -215,7 +215,7 @@ export async function sendOwnerDm(text, { port = 9222, dryRun = false } = {}) {
       content: checked.content,
       rule: 'pass',
       ai: 'skip-owner',
-      human: 'manual-cli',
+      human: 'manual',
       exec: 'fail',
       verify: 'not-sent',
       error: error.message,
